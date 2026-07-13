@@ -25,6 +25,7 @@ const permissions = [
   { id: "alerts:manage", label: "Configurar alertas" },
   { id: "loans:view", label: "Ver prestamos" },
   { id: "loans:manage", label: "Administrar prestamos" },
+  { id: "family:view", label: "Ver finanzas familiares" },
   { id: "family:manage", label: "Administrar finanzas familiares" },
 ];
 
@@ -184,7 +185,7 @@ function migrateData(data) {
   migrated.roles = migrated.roles?.length ? migrated.roles : structuredClone(defaultRoles);
   migrated.roles = migrated.roles.map((role) => {
     const extraPermissions = [];
-    if (role.id === "owner") extraPermissions.push("alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:manage");
+    if (role.id === "owner") extraPermissions.push("alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:view", "family:manage");
     if (role.id === "operator") extraPermissions.push("alerts:view");
     return { ...role, permissions: [...new Set([...(role.permissions || []), ...extraPermissions])] };
   });
@@ -363,10 +364,23 @@ function canManage() {
   return hasPermission("business:manage") || hasPermission("settings:access");
 }
 
+function canViewFamilyFinances() {
+  return hasPermission("family:view") || hasPermission("family:manage");
+}
+
 function render() {
   const app = byId("app");
   app.innerHTML = session ? layout() : login();
   bindEvents();
+}
+
+function renderAndFocusContent() {
+  render();
+  requestAnimationFrame(() => {
+    if (!window.matchMedia("(max-width: 980px)").matches) return;
+    const main = document.querySelector(".main");
+    if (main) main.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 function login() {
@@ -506,14 +520,14 @@ function dashboardView() {
   const rentTotal = state.rentals.flatMap((rental) => rental.payments).reduce((total, item) => total + Number(item.amount), 0);
   const businessIncome = uberTotal + rentTotal;
   const businessExpenses = sum(state.expenses, "amount") + sum(state.maintenances, "cost") + state.rentals.flatMap((rental) => rental.expenses).reduce((total, item) => total + Number(item.amount), 0);
-  const familyExpenses = sum(state.familyExpenses, "amount");
+  const familyExpenses = canViewFamilyFinances() ? sum(state.familyExpenses, "amount") : 0;
   const loanReceivable = activeLoans().reduce((total, loan) => total + loanBalance(loan), 0);
   const alertCount = visibleAlerts().length;
   return `
     <div class="metrics">
       <div class="metric"><span>Ingresos negocios</span><strong>${money(businessIncome)}</strong></div>
       <div class="metric"><span>Gastos negocio</span><strong>${money(businessExpenses)}</strong></div>
-      <div class="metric"><span>Gastos familiares</span><strong>${money(familyExpenses)}</strong></div>
+      <div class="metric"><span>Gastos familiares</span><strong>${canViewFamilyFinances() ? money(familyExpenses) : "Restringido"}</strong></div>
       <div class="metric"><span>Por cobrar prestamos</span><strong>${money(loanReceivable)}</strong></div>
     </div>
     <div class="metrics">
@@ -522,13 +536,13 @@ function dashboardView() {
       <div class="metric"><span>Prestamos activos</span><strong>${activeLoans().length}</strong></div>
       <div class="metric"><span>Alertas para tu rol</span><strong>${alertCount}</strong></div>
     </div>
-    <section class="panel">
+    ${canViewFamilyFinances() ? `<section class="panel">
       <div class="section-title">
         <div><h2>Gastos familiares</h2><p class="hint">Gastos personales y del hogar separados de los gastos del negocio.</p></div>
         ${hasPermission("family:manage") ? `<button class="ghost" data-drawer="family-expense">Registrar gasto</button>` : ""}
       </div>
       <div class="records">${familyExpenseRecords()}</div>
-    </section>
+    </section>` : ""}
     <div class="section-title">
       <div><h2>Negocios</h2><p class="hint">Vista rapida de cada operacion.</p></div>
     </div>
@@ -1366,7 +1380,7 @@ function bindEvents() {
     button.addEventListener("click", () => {
       activeBusiness = button.dataset.business;
       view = "business";
-      render();
+      renderAndFocusContent();
     });
   });
 
@@ -1374,14 +1388,14 @@ function bindEvents() {
     button.addEventListener("click", () => {
       view = button.dataset.nav;
       activeBusiness = null;
-      render();
+      renderAndFocusContent();
     });
   });
 
   document.querySelectorAll("[data-settings-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       settingsTab = button.dataset.settingsTab;
-      render();
+      renderAndFocusContent();
     });
   });
 
