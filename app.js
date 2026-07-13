@@ -23,6 +23,9 @@ const permissions = [
   { id: "distribution:manage", label: "Configurar distribucion Uber" },
   { id: "alerts:view", label: "Ver alertas" },
   { id: "alerts:manage", label: "Configurar alertas" },
+  { id: "loans:view", label: "Ver prestamos" },
+  { id: "loans:manage", label: "Administrar prestamos" },
+  { id: "family:manage", label: "Administrar finanzas familiares" },
 ];
 
 const defaultRoles = [
@@ -143,6 +146,8 @@ const initialData = {
     },
   ],
   transfers: [],
+  loans: [],
+  familyExpenses: [],
   alertSettings: structuredClone(defaultAlertSettings),
 };
 
@@ -179,12 +184,14 @@ function migrateData(data) {
   migrated.roles = migrated.roles?.length ? migrated.roles : structuredClone(defaultRoles);
   migrated.roles = migrated.roles.map((role) => {
     const extraPermissions = [];
-    if (role.id === "owner") extraPermissions.push("alerts:view", "alerts:manage");
+    if (role.id === "owner") extraPermissions.push("alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:manage");
     if (role.id === "operator") extraPermissions.push("alerts:view");
     return { ...role, permissions: [...new Set([...(role.permissions || []), ...extraPermissions])] };
   });
   migrated.users = migrated.users?.length ? migrated.users : structuredClone(defaultUsers);
   migrated.transfers = migrated.transfers || [];
+  migrated.loans = migrated.loans || [];
+  migrated.familyExpenses = migrated.familyExpenses || [];
   migrated.incomeDistributions = migrated.incomeDistributions || [];
   migrated.alertSettings = {
     ...structuredClone(defaultAlertSettings),
@@ -397,7 +404,7 @@ function login() {
 }
 
 function layout() {
-  const title = view === "settings" ? "Parametria" : view === "alerts" ? "Alertas" : activeBusiness ? businessTitle() : "Panel de negocios";
+  const title = view === "settings" ? "Parametria" : view === "alerts" ? "Alertas" : view === "loans" ? "Prestamos" : activeBusiness ? businessTitle() : "Panel de negocios";
   return `
     <section class="app-shell">
       <aside class="sidebar">
@@ -408,6 +415,7 @@ function layout() {
         <nav class="nav">
           <button class="${!activeBusiness && view === "dashboard" ? "active" : ""}" data-nav="dashboard">Inicio <span>⌂</span></button>
           ${hasPermission("alerts:view") ? `<button class="${view === "alerts" ? "active" : ""}" data-nav="alerts">Alertas <span>${visibleAlerts().length}</span></button>` : ""}
+          ${hasPermission("loans:view") ? `<button class="${view === "loans" ? "active" : ""}" data-nav="loans">Prestamos <span>${activeLoans().length}</span></button>` : ""}
           ${state.businesses.map((business) => `<button class="${activeBusiness === business.id ? "active" : ""}" data-business="${business.id}">${business.name} <span>›</span></button>`).join("")}
           ${hasPermission("settings:access") ? `<button class="${view === "settings" ? "active" : ""}" data-nav="settings">Parametria <span>⚙</span></button>` : ""}
           ${hasPermission("business:manage") ? `<button data-action="new-business">Agregar negocio <span>＋</span></button>` : ""}
@@ -440,6 +448,7 @@ function businessTitle() {
 }
 
 function topbarHint() {
+  if (view === "loans") return "Prestamos hechos desde rubros del negocio o cuentas familiares, con saldo, interes y pagos.";
   if (view === "alerts") return "Vencimientos y avisos operativos segun los roles destinatarios.";
   if (view === "settings") return "Gestiona usuarios, roles, permisos y configuraciones sensibles.";
   if (activeBusiness === "uber") return "Metas diarias, conductores, gastos, prestamos, mantenimiento y utilidad consolidada.";
@@ -449,6 +458,9 @@ function topbarHint() {
 }
 
 function topbarActions() {
+  if (view === "loans") {
+    return hasPermission("loans:manage") ? `<button class="secondary" data-drawer="loan">＋ Prestamo</button>` : "";
+  }
   if (view === "alerts") {
     return hasPermission("alerts:manage") ? `<button class="secondary" data-drawer="alert-settings">Configurar alertas</button>` : "";
   }
@@ -458,6 +470,9 @@ function topbarActions() {
       <button class="secondary" data-drawer="user">＋ Usuario</button>
       <button class="secondary" data-drawer="role">＋ Rol</button>
     `;
+  }
+  if (view === "dashboard") {
+    return hasPermission("family:manage") ? `<button class="secondary" data-drawer="family-expense">＋ Gasto familiar</button>` : "";
   }
   if (activeBusiness === "uber") {
     return `
@@ -477,6 +492,7 @@ function topbarActions() {
 }
 
 function content() {
+  if (view === "loans") return loansView();
   if (view === "alerts") return alertsView();
   if (view === "settings") return settingsView();
   if (activeBusiness === "uber") return uberView();
@@ -488,15 +504,31 @@ function content() {
 function dashboardView() {
   const uberTotal = sum(state.uberIncome, "amount");
   const rentTotal = state.rentals.flatMap((rental) => rental.payments).reduce((total, item) => total + Number(item.amount), 0);
-  const pendingTransfers = state.transfers.filter((item) => item.status === "Pendiente").length;
+  const businessIncome = uberTotal + rentTotal;
+  const businessExpenses = sum(state.expenses, "amount") + sum(state.maintenances, "cost") + state.rentals.flatMap((rental) => rental.expenses).reduce((total, item) => total + Number(item.amount), 0);
+  const familyExpenses = sum(state.familyExpenses, "amount");
+  const loanReceivable = activeLoans().reduce((total, loan) => total + loanBalance(loan), 0);
   const alertCount = visibleAlerts().length;
   return `
     <div class="metrics">
-      <div class="metric"><span>Ingreso Uber</span><strong>${money(uberTotal)}</strong></div>
-      <div class="metric"><span>Renta recibida</span><strong>${money(rentTotal)}</strong></div>
+      <div class="metric"><span>Ingresos negocios</span><strong>${money(businessIncome)}</strong></div>
+      <div class="metric"><span>Gastos negocio</span><strong>${money(businessExpenses)}</strong></div>
+      <div class="metric"><span>Gastos familiares</span><strong>${money(familyExpenses)}</strong></div>
+      <div class="metric"><span>Por cobrar prestamos</span><strong>${money(loanReceivable)}</strong></div>
+    </div>
+    <div class="metrics">
+      <div class="metric"><span>Balance familiar</span><strong>${money(businessIncome - businessExpenses - familyExpenses)}</strong></div>
       <div class="metric"><span>Negocios activos</span><strong>${state.businesses.length}</strong></div>
+      <div class="metric"><span>Prestamos activos</span><strong>${activeLoans().length}</strong></div>
       <div class="metric"><span>Alertas para tu rol</span><strong>${alertCount}</strong></div>
     </div>
+    <section class="panel">
+      <div class="section-title">
+        <div><h2>Gastos familiares</h2><p class="hint">Gastos personales y del hogar separados de los gastos del negocio.</p></div>
+        ${hasPermission("family:manage") ? `<button class="ghost" data-drawer="family-expense">Registrar gasto</button>` : ""}
+      </div>
+      <div class="records">${familyExpenseRecords()}</div>
+    </section>
     <div class="section-title">
       <div><h2>Negocios</h2><p class="hint">Vista rapida de cada operacion.</p></div>
     </div>
@@ -533,6 +565,145 @@ function genericBusinessView() {
       <div class="empty">Este negocio ya esta creado. El siguiente paso es agregarle su propio modulo de ingresos, gastos y reportes.</div>
     </section>
   `;
+}
+
+function loansView() {
+  if (!hasPermission("loans:view")) return `<div class="empty">Tu rol no tiene permiso para ver prestamos.</div>`;
+  const totalPrincipal = state.loans.reduce((total, loan) => total + Number(loan.principal || 0), 0);
+  const totalDue = state.loans.reduce((total, loan) => total + loanTotalDue(loan), 0);
+  const totalPaid = state.loans.reduce((total, loan) => total + loanPaid(loan), 0);
+  const balance = state.loans.reduce((total, loan) => total + loanBalance(loan), 0);
+  return `
+    <div class="metrics">
+      <div class="metric"><span>Prestado</span><strong>${money(totalPrincipal)}</strong></div>
+      <div class="metric"><span>Total a cobrar</span><strong>${money(totalDue)}</strong></div>
+      <div class="metric"><span>Pagado</span><strong>${money(totalPaid)}</strong></div>
+      <div class="metric"><span>Saldo</span><strong>${money(balance)}</strong></div>
+    </div>
+    <section class="panel">
+      <div class="section-title">
+        <div><h2>Prestamos</h2><p class="hint">Control de prestamos familiares o a terceros, con o sin interes.</p></div>
+        ${hasPermission("loans:manage") ? `<button class="primary" data-drawer="loan">Crear prestamo</button>` : ""}
+      </div>
+      <div class="loan-grid">
+        ${state.loans.length ? state.loans.map(loanCard).join("") : `<div class="empty">Todavia no hay prestamos registrados.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function loanCard(loan) {
+  const balance = loanBalance(loan);
+  const next = nextLoanPayment(loan);
+  return `
+    <article class="loan-card">
+      <header>
+        <div>
+          <span class="pill">${loan.status}</span>
+          <h3>${loan.borrower}</h3>
+          <p class="hint">${loan.sourceLabel}</p>
+        </div>
+        <strong>${money(balance)}</strong>
+      </header>
+      <dl>
+        <div><dt>Prestado</dt><dd>${money(loan.principal)}</dd></div>
+        <div><dt>Total a pagar</dt><dd>${money(loanTotalDue(loan))}</dd></div>
+        <div><dt>Interes</dt><dd>${loan.interestEnabled ? `${loan.annualRate}% anual` : "Sin interes"}</dd></div>
+        <div><dt>Cuota estimada</dt><dd>${money(loanMonthlyPayment(loan))}</dd></div>
+        <div><dt>Proximo pago</dt><dd>${next ? `${dateText(next.date)} · ${money(next.amount)}` : "Pagado"}</dd></div>
+        <div><dt>Pagado</dt><dd>${money(loanPaid(loan))}</dd></div>
+      </dl>
+      <p>${loan.notes || ""}</p>
+      <div class="records compact-records">${loanPayments(loan)}</div>
+      <div class="actions">
+        ${hasPermission("loans:manage") && balance > 0 ? `<button class="ghost" data-drawer="loan-payment" data-id="${loan.id}">Registrar pago</button>` : ""}
+        ${deleteButton("loan", loan.id)}
+      </div>
+    </article>
+  `;
+}
+
+function loanPayments(loan) {
+  if (!loan.payments?.length) return `<div class="empty">Sin pagos registrados.</div>`;
+  return loan.payments
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map((payment) => `<article class="record-row"><div><small>Pago</small><strong>${payment.notes || "Abono"}</strong></div><div><small>Fecha</small><strong>${dateText(payment.date)}</strong></div><div><small>Monto</small><strong>${money(payment.amount)}</strong></div></article>`)
+    .join("");
+}
+
+function activeLoans() {
+  return state.loans.filter((loan) => loan.status !== "Pagado" && loanBalance(loan) > 0);
+}
+
+function loanTotalDue(loan) {
+  const principal = Number(loan.principal || 0);
+  if (!loan.interestEnabled) return principal;
+  return principal + principal * (Number(loan.annualRate || 0) / 100) * (Number(loan.termMonths || 1) / 12);
+}
+
+function loanPaid(loan) {
+  return (loan.payments || []).reduce((total, payment) => total + Number(payment.amount || 0), 0);
+}
+
+function loanBalance(loan) {
+  return Math.max(0, loanTotalDue(loan) - loanPaid(loan));
+}
+
+function loanMonthlyPayment(loan) {
+  return loanTotalDue(loan) / Math.max(1, Number(loan.termMonths || 1));
+}
+
+function nextLoanPayment(loan) {
+  const balance = loanBalance(loan);
+  if (balance <= 0) return null;
+  const paymentsMade = loan.payments?.length || 0;
+  const date = new Date(`${loan.startDate}T00:00:00`);
+  date.setMonth(date.getMonth() + paymentsMade + 1);
+  date.setDate(Number(loan.dueDay || date.getDate()));
+  return { date: date.toISOString().slice(0, 10), amount: Math.min(balance, loanMonthlyPayment(loan)) };
+}
+
+function familyExpenseRecords() {
+  if (!state.familyExpenses.length) return `<div class="empty">Todavia no hay gastos familiares registrados.</div>`;
+  return state.familyExpenses
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 8)
+    .map((item) => `<article class="record-row"><div><small>${item.category}</small><strong>${item.description || "Gasto familiar"}</strong></div><div><small>Fecha</small><strong>${dateText(item.date)}</strong></div><div><small>Monto</small><strong>${money(item.amount)}</strong></div>${deleteButton("familyExpense", item.id)}</article>`)
+    .join("");
+}
+
+function loanSourceOptions() {
+  const options = [];
+  state.vehicles.forEach((vehicle) => {
+    sortedAllocations(vehicle).forEach((allocation) => {
+      options.push({
+        value: `vehicle:${vehicle.id}:${allocation.id}`,
+        label: `${vehicle.name} · ${allocation.label} (${money(allocation.balance)})`,
+      });
+    });
+  });
+  state.rentals.forEach((rental) => {
+    options.push({ value: `rental:${rental.id}:rent`, label: `${rental.property} · Cuenta alquiler` });
+  });
+  options.push({ value: "family:general:cash", label: "Cuenta familiar / efectivo" });
+  return options.map((option) => `<option value="${option.value}">${option.label}</option>`).join("");
+}
+
+function parseLoanSource(value) {
+  const [sourceType, sourceId, allocationId] = value.split(":");
+  let sourceLabel = "Cuenta familiar";
+  if (sourceType === "vehicle") {
+    const vehicle = state.vehicles.find((item) => item.id === sourceId);
+    const allocation = vehicle?.allocations?.find((item) => item.id === allocationId);
+    sourceLabel = `${vehicle?.name || "Auto"} · ${allocation?.label || "Rubro"}`;
+  }
+  if (sourceType === "rental") {
+    const rental = state.rentals.find((item) => item.id === sourceId);
+    sourceLabel = `${rental?.property || "Alquiler"} · Cuenta alquiler`;
+  }
+  return { sourceType, sourceId, allocationId, sourceLabel };
 }
 
 function alertsView() {
@@ -941,6 +1112,9 @@ function drawerTemplate() {
     role: drawer.id ? "Editar rol" : "Crear rol",
     transfer: "Registrar transferencia",
     "alert-settings": "Configurar alertas",
+    loan: "Crear prestamo",
+    "loan-payment": "Registrar pago de prestamo",
+    "family-expense": "Registrar gasto familiar",
   };
   return `
     <div class="drawer-backdrop">
@@ -1118,6 +1292,41 @@ function drawerForm() {
       <button class="primary full" type="submit">Guardar alertas</button>
     </form>`;
   }
+  if (drawer.type === "loan") {
+    return `<form id="drawerForm" data-form="loan" class="form-grid">
+      <div class="field"><label>Persona</label><input name="borrower" placeholder="Familiar o tercero" required /></div>
+      <div class="field"><label>Fuente del dinero</label><select name="source" required>${loanSourceOptions()}</select></div>
+      <div class="field"><label>Monto prestado</label><input name="principal" type="number" step="0.01" min="0" required /></div>
+      <div class="field"><label>Fecha inicio</label><input name="startDate" type="date" value="${today()}" required /></div>
+      <div class="field"><label>Meses plazo</label><input name="termMonths" type="number" min="1" value="1" required /></div>
+      <div class="field"><label>Dia de pago</label><input name="dueDay" type="number" min="1" max="31" value="30" required /></div>
+      <div class="field"><label>Cobra interes</label><select name="interestEnabled"><option value="false">No</option><option value="true">Si</option></select></div>
+      <div class="field"><label>% interes anual</label><input name="annualRate" type="number" step="0.01" min="0" value="0" /></div>
+      <div class="field full"><label>Notas</label><textarea name="notes" placeholder="Condiciones, motivo, acuerdo de pago"></textarea></div>
+      <button class="primary full" type="submit">Guardar prestamo</button>
+    </form>`;
+  }
+  if (drawer.type === "loan-payment") {
+    const loan = state.loans.find((item) => item.id === drawer.id);
+    const next = nextLoanPayment(loan);
+    return `<form id="drawerForm" data-form="loan-payment" class="form-grid">
+      <input type="hidden" name="loanId" value="${loan.id}" />
+      <div class="field"><label>Fecha</label><input name="date" type="date" value="${today()}" required /></div>
+      <div class="field"><label>Monto</label><input name="amount" type="number" step="0.01" min="0" value="${next ? next.amount.toFixed(2) : loanBalance(loan).toFixed(2)}" required /></div>
+      <div class="field full"><label>Nota</label><textarea name="notes">Pago de prestamo</textarea></div>
+      <button class="primary full" type="submit">Guardar pago</button>
+    </form>`;
+  }
+  if (drawer.type === "family-expense") {
+    return `<form id="drawerForm" data-form="family-expense" class="form-grid">
+      <div class="field"><label>Fecha</label><input name="date" type="date" value="${today()}" required /></div>
+      <div class="field"><label>Monto</label><input name="amount" type="number" step="0.01" min="0" required /></div>
+      <div class="field"><label>Categoria</label><select name="category"><option>Casa</option><option>Supermercado</option><option>Servicios</option><option>Educacion</option><option>Salud</option><option>Transporte</option><option>Otro</option></select></div>
+      <div class="field"><label>Pagado desde</label><input name="source" placeholder="Efectivo, banco, tarjeta" /></div>
+      <div class="field full"><label>Descripcion</label><textarea name="description"></textarea></div>
+      <button class="primary full" type="submit">Guardar gasto familiar</button>
+    </form>`;
+  }
   return `<form id="drawerForm" data-form="business" class="form-grid">
     <div class="field"><label>Nombre</label><input name="name" required /></div>
     <div class="field"><label>Tipo</label><input name="type" placeholder="Venta, alquiler, servicio" required /></div>
@@ -1272,6 +1481,9 @@ function handleForm(event) {
   if (type === "role") saveRole(new FormData(form), data);
   if (type === "transfer") state.transfers.push({ id: crypto.randomUUID(), ...data, amount: Number(data.amount), status: "Pendiente", requestedBy: session.email });
   if (type === "alert-settings") saveAlertSettings(new FormData(form), data);
+  if (type === "loan") createLoan(data);
+  if (type === "loan-payment") registerLoanPayment(data);
+  if (type === "family-expense") state.familyExpenses.push({ id: crypto.randomUUID(), ...data, amount: Number(data.amount) });
 
   saveData();
   if (["user", "role"].includes(type) && data.email === session?.email) saveSession(state.users.find((item) => item.email === data.email));
@@ -1294,8 +1506,59 @@ function allowedForForm(type) {
     role: "users:manage",
     transfer: "transfers:authorize",
     "alert-settings": "alerts:manage",
+    loan: "loans:manage",
+    "loan-payment": "loans:manage",
+    "family-expense": "family:manage",
   };
   return hasPermission(rules[type]);
+}
+
+function createLoan(data) {
+  const source = parseLoanSource(data.source);
+  const principal = Number(data.principal || 0);
+  const loan = {
+    id: crypto.randomUUID(),
+    borrower: data.borrower,
+    ...source,
+    principal,
+    startDate: data.startDate,
+    termMonths: Number(data.termMonths || 1),
+    dueDay: Number(data.dueDay || 30),
+    interestEnabled: data.interestEnabled === "true",
+    annualRate: Number(data.annualRate || 0),
+    notes: data.notes,
+    status: "Activo",
+    payments: [],
+    createdBy: session.email,
+  };
+  withdrawFromLoanSource(loan, principal);
+  state.loans.push(loan);
+}
+
+function registerLoanPayment(data) {
+  const loan = state.loans.find((item) => item.id === data.loanId);
+  if (!loan) return;
+  const amount = Number(data.amount || 0);
+  loan.payments = loan.payments || [];
+  loan.payments.push({ id: crypto.randomUUID(), date: data.date, amount, notes: data.notes });
+  depositToLoanSource(loan, amount);
+  if (loanBalance(loan) <= 0) loan.status = "Pagado";
+}
+
+function withdrawFromLoanSource(loan, amount) {
+  const allocation = findLoanAllocation(loan);
+  if (allocation) allocation.balance = Number(allocation.balance || 0) - amount;
+}
+
+function depositToLoanSource(loan, amount) {
+  const allocation = findLoanAllocation(loan);
+  if (allocation) allocation.balance = Number(allocation.balance || 0) + amount;
+}
+
+function findLoanAllocation(loan) {
+  if (loan.sourceType !== "vehicle") return null;
+  const vehicle = state.vehicles.find((item) => item.id === loan.sourceId);
+  return vehicle?.allocations?.find((item) => item.id === loan.allocationId) || null;
 }
 
 function distributeIncome(income) {
@@ -1400,8 +1663,18 @@ function deleteRecord(type, id) {
   if (type === "maintenance") state.maintenances = state.maintenances.filter((item) => item.id !== id);
   if (type === "payment") state.rentals[0].payments = state.rentals[0].payments.filter((item) => item.id !== id);
   if (type === "rentExpense") state.rentals[0].expenses = state.rentals[0].expenses.filter((item) => item.id !== id);
+  if (type === "familyExpense") state.familyExpenses = state.familyExpenses.filter((item) => item.id !== id);
+  if (type === "loan") deleteLoan(id);
   saveData();
   render();
+}
+
+function deleteLoan(id) {
+  const loan = state.loans.find((item) => item.id === id);
+  if (!loan) return;
+  const allocation = findLoanAllocation(loan);
+  if (allocation) allocation.balance = Number(allocation.balance || 0) + Number(loan.principal || 0) - loanPaid(loan);
+  state.loans = state.loans.filter((item) => item.id !== id);
 }
 
 function removeAllocation(vehicleId, allocationId) {

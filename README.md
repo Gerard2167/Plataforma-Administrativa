@@ -39,6 +39,28 @@ Para envío automático real de correos, la app necesita conectarse a un servici
 - Firebase Functions + SendGrid
 - EmailJS para una solución sencilla desde frontend
 
+## Prestamos
+
+El modulo `Prestamos` permite registrar dinero prestado a familiares o terceros desde una fuente, como un rubro acumulado de un auto, la cuenta del alquiler o una cuenta familiar.
+
+Cada prestamo guarda:
+
+- Persona que recibe el dinero.
+- Fuente del dinero.
+- Monto prestado.
+- Si cobra interes o no.
+- Interes anual.
+- Plazo en meses.
+- Dia estimado de pago.
+- Pagos realizados.
+- Saldo pendiente.
+
+Si el prestamo sale de un rubro de un auto, el sistema descuenta el monto del saldo acumulado del rubro. Cuando se registra un pago, el dinero vuelve al mismo rubro.
+
+## Gastos familiares
+
+En `Inicio` se puede registrar gastos familiares y verlos separados de los gastos del negocio. El dashboard muestra ingresos de negocios, gastos de negocio, gastos familiares, prestamos por cobrar y balance familiar.
+
 ## Distribución de Uber
 
 La distribución de ingresos de cada carro se maneja por montos fijos y prioridad, no por porcentajes. Cada carro puede tener rubros como préstamo, mantenimiento, ganancia del negocio y ganancia personal.

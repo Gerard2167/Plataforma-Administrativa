@@ -370,11 +370,65 @@ button {
   margin-top: 18px;
 }
 
+.loan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .vehicle-card {
   padding: 18px;
   box-shadow: none;
   display: grid;
   gap: 14px;
+}
+
+.loan-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.loan-card header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.loan-card header strong {
+  font-size: 24px;
+}
+
+.loan-card h3 {
+  margin: 8px 0 4px;
+  font-size: 22px;
+}
+
+.loan-card dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 0;
+}
+
+.loan-card dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.loan-card dd {
+  margin: 4px 0 0;
+  font-weight: 800;
+}
+
+.compact-records .record-row {
+  grid-template-columns: 1fr 0.8fr 0.7fr;
+  box-shadow: none;
 }
 
 .vehicle-card header {
@@ -687,6 +741,7 @@ button {
   .business-grid,
   .metrics,
   .vehicle-grid,
+  .loan-grid,
   .role-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -709,9 +764,14 @@ button {
   .business-grid,
   .metrics,
   .vehicle-grid,
+  .loan-grid,
   .role-grid,
   .form-grid,
   .allocation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .loan-card dl {
     grid-template-columns: 1fr;
   }
 
