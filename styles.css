@@ -362,6 +362,23 @@ button {
   gap: 14px;
 }
 
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.profile-warning {
+  border: 1px solid #efc36d;
+  border-left: 5px solid var(--accent);
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #6d4a05;
+  font-weight: 800;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
 .metric {
   padding: 18px;
   box-shadow: none;
@@ -760,6 +777,7 @@ button {
 
   .business-grid,
   .metrics,
+  .profile-grid,
   .vehicle-grid,
   .loan-grid,
   .role-grid {
@@ -783,6 +801,7 @@ button {
 
   .business-grid,
   .metrics,
+  .profile-grid,
   .vehicle-grid,
   .loan-grid,
   .role-grid,

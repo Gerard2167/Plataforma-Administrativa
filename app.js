@@ -51,8 +51,8 @@ const defaultRoles = [
 ];
 
 const defaultUsers = [
-  { id: "u-admin", email: "admin@familia.com", password: "admin123", name: "Administrador", roleId: "owner", active: true },
-  { id: "u-operador", email: "operador@familia.com", password: "operador123", name: "Operador", roleId: "operator", active: true },
+  { id: "u-admin", email: "admin@familia.com", password: "admin123", name: "Administrador", roleId: "owner", active: true, mustChangePassword: false },
+  { id: "u-operador", email: "operador@familia.com", password: "operador123", name: "Operador", roleId: "operator", active: true, mustChangePassword: false },
 ];
 
 const defaultDistribution = [
@@ -190,6 +190,7 @@ function migrateData(data) {
     return { ...role, permissions: [...new Set([...(role.permissions || []), ...extraPermissions])] };
   });
   migrated.users = migrated.users?.length ? migrated.users : structuredClone(defaultUsers);
+  migrated.users = migrated.users.map((user) => ({ ...user, mustChangePassword: Boolean(user.mustChangePassword) }));
   migrated.transfers = migrated.transfers || [];
   migrated.loans = migrated.loans || [];
   migrated.familyExpenses = migrated.familyExpenses || [];
@@ -330,7 +331,7 @@ function loadSession() {
 
 function sessionFromUser(user) {
   const role = state.roles.find((item) => item.id === user.roleId) || state.roles[0];
-  return { email: user.email, name: user.name, roleId: role.id, role: role.name, permissions: role.permissions || [] };
+  return { email: user.email, name: user.name, roleId: role.id, role: role.name, permissions: role.permissions || [], mustChangePassword: Boolean(user.mustChangePassword) };
 }
 
 function saveSession(user) {
@@ -418,7 +419,7 @@ function login() {
 }
 
 function layout() {
-  const title = view === "settings" ? "Parametria" : view === "alerts" ? "Alertas" : view === "loans" ? "Prestamos" : activeBusiness ? businessTitle() : "Panel de negocios";
+  const title = session?.mustChangePassword ? "Perfil" : view === "profile" ? "Perfil" : view === "settings" ? "Parametria" : view === "alerts" ? "Alertas" : view === "loans" ? "Prestamos" : activeBusiness ? businessTitle() : "Panel de negocios";
   return `
     <section class="app-shell">
       <aside class="sidebar">
@@ -431,6 +432,7 @@ function layout() {
           ${hasPermission("alerts:view") ? `<button class="${view === "alerts" ? "active" : ""}" data-nav="alerts">Alertas <span>${visibleAlerts().length}</span></button>` : ""}
           ${hasPermission("loans:view") ? `<button class="${view === "loans" ? "active" : ""}" data-nav="loans">Prestamos <span>${activeLoans().length}</span></button>` : ""}
           ${state.businesses.map((business) => `<button class="${activeBusiness === business.id ? "active" : ""}" data-business="${business.id}">${business.name} <span>›</span></button>`).join("")}
+          <button class="${view === "profile" ? "active" : ""}" data-nav="profile">Perfil <span>○</span></button>
           ${hasPermission("settings:access") ? `<button class="${view === "settings" ? "active" : ""}" data-nav="settings">Parametria <span>⚙</span></button>` : ""}
           ${hasPermission("business:manage") ? `<button data-action="new-business">Agregar negocio <span>＋</span></button>` : ""}
         </nav>
@@ -462,6 +464,7 @@ function businessTitle() {
 }
 
 function topbarHint() {
+  if (view === "profile") return "Datos de usuario, rol y cambio de contrasena.";
   if (view === "loans") return "Prestamos hechos desde rubros del negocio o cuentas familiares, con saldo, interes y pagos.";
   if (view === "alerts") return "Vencimientos y avisos operativos segun los roles destinatarios.";
   if (view === "settings") return "Gestiona usuarios, roles, permisos y configuraciones sensibles.";
@@ -472,6 +475,7 @@ function topbarHint() {
 }
 
 function topbarActions() {
+  if (session?.mustChangePassword) return "";
   if (view === "loans") {
     return hasPermission("loans:manage") ? `<button class="secondary" data-drawer="loan">＋ Prestamo</button>` : "";
   }
@@ -506,6 +510,8 @@ function topbarActions() {
 }
 
 function content() {
+  if (session?.mustChangePassword && view !== "profile") return profileView();
+  if (view === "profile") return profileView();
   if (view === "loans") return loansView();
   if (view === "alerts") return alertsView();
   if (view === "settings") return settingsView();
@@ -579,6 +585,49 @@ function genericBusinessView() {
       <div class="empty">Este negocio ya esta creado. El siguiente paso es agregarle su propio modulo de ingresos, gastos y reportes.</div>
     </section>
   `;
+}
+
+function profileView() {
+  const user = state.users.find((item) => item.email === session.email);
+  const role = state.roles.find((item) => item.id === user?.roleId);
+  return `
+    ${session.mustChangePassword ? `<div class="profile-warning">Debes actualizar tu contrasena temporal antes de continuar.</div>` : ""}
+    <section class="panel">
+      <div class="section-title">
+        <div><h2>Mi perfil</h2><p class="hint">Informacion de acceso y rol asignado.</p></div>
+      </div>
+      <div class="profile-grid">
+        <div class="metric"><span>Nombre</span><strong>${user?.name || session.name}</strong></div>
+        <div class="metric"><span>Correo</span><strong>${session.email}</strong></div>
+        <div class="metric"><span>Rol</span><strong>${role?.name || session.role}</strong></div>
+        <div class="metric"><span>Estado</span><strong>${user?.active ? "Activo" : "Inactivo"}</strong></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="section-title">
+        <div><h2>Cambiar contrasena</h2><p class="hint">Usa una contrasena privada y distinta a la temporal.</p></div>
+      </div>
+      <form id="profileForm" class="form-grid">
+        <div class="field"><label>Nueva contrasena</label><input name="password" type="password" minlength="6" autocomplete="new-password" required /></div>
+        <div class="field"><label>Confirmar contrasena</label><input name="confirmPassword" type="password" minlength="6" autocomplete="new-password" required /></div>
+        <button class="primary full" type="submit">Actualizar contrasena</button>
+      </form>
+    </section>
+  `;
+}
+
+async function updateOwnPassword(password) {
+  const user = state.users.find((item) => item.email === session.email);
+  if (!user) throw new Error("No se encontro el usuario en Parametria.");
+  if (isSupabaseConfigured()) {
+    const client = initSupabaseClient();
+    const { error } = await client.auth.updateUser({ password });
+    if (error) throw error;
+  }
+  user.password = password;
+  user.mustChangePassword = false;
+  saveData();
+  saveSession(user);
 }
 
 function loansView() {
@@ -1263,7 +1312,7 @@ function drawerForm() {
     </form>`;
   }
   if (drawer.type === "user") {
-    const user = state.users.find((item) => item.id === drawer.id) || { id: "", name: "", email: "", password: "", roleId: state.roles[0]?.id, active: true };
+    const user = state.users.find((item) => item.id === drawer.id) || { id: "", name: "", email: "", password: "", roleId: state.roles[0]?.id, active: true, mustChangePassword: true };
     return `<form id="drawerForm" data-form="user" class="form-grid">
       <input type="hidden" name="id" value="${user.id}" />
       <div class="field"><label>Nombre</label><input name="name" value="${user.name}" required /></div>
@@ -1271,6 +1320,7 @@ function drawerForm() {
       <div class="field"><label>Contrasena local</label><input name="password" value="${user.password || ""}" placeholder="Solo para modo local" /></div>
       <div class="field"><label>Rol</label><select name="roleId">${roleOptions(user.roleId)}</select></div>
       <div class="field full"><label>Estado</label><select name="active"><option value="true" ${user.active ? "selected" : ""}>Activo</option><option value="false" ${!user.active ? "selected" : ""}>Inactivo</option></select></div>
+      <div class="field full"><label>Cambio de contrasena</label><select name="mustChangePassword"><option value="true" ${user.mustChangePassword ? "selected" : ""}>Debe cambiarla al ingresar</option><option value="false" ${!user.mustChangePassword ? "selected" : ""}>No requerido</option></select></div>
       <button class="primary full" type="submit">Guardar usuario</button>
     </form>`;
   }
@@ -1372,7 +1422,29 @@ function bindEvents() {
         return;
       }
       saveSession(freshUser);
+      if (freshUser.mustChangePassword) view = "profile";
       render();
+    });
+  }
+
+  const profileForm = byId("profileForm");
+  if (profileForm) {
+    profileForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(profileForm);
+      const password = form.get("password");
+      const confirmPassword = form.get("confirmPassword");
+      if (password !== confirmPassword) {
+        alert("Las contrasenas no coinciden.");
+        return;
+      }
+      try {
+        await updateOwnPassword(password);
+        alert("Contrasena actualizada correctamente.");
+        render();
+      } catch (error) {
+        alert(`No se pudo actualizar la contrasena.\n\nDetalle: ${error.message}`);
+      }
     });
   }
 
@@ -1635,7 +1707,7 @@ function saveDistribution(vehicle, formData) {
 }
 
 function saveUser(data) {
-  const payload = { id: data.id || crypto.randomUUID(), name: data.name, email: data.email, password: data.password || "", roleId: data.roleId, active: data.active === "true" };
+  const payload = { id: data.id || crypto.randomUUID(), name: data.name, email: data.email, password: data.password || "", roleId: data.roleId, active: data.active === "true", mustChangePassword: data.mustChangePassword === "true" };
   const index = state.users.findIndex((item) => item.id === data.id);
   if (index >= 0) state.users[index] = payload;
   else state.users.push(payload);

@@ -21,6 +21,10 @@ El rol Propietario puede entrar a Parametría para:
 - Registrar y autorizar solicitudes de transferencia.
 - Configurar alertas por rol.
 
+## Perfil y contraseña temporal
+
+Cada usuario tiene una sección `Perfil` donde puede ver su nombre, correo, rol y cambiar su contraseña. Al crear o editar usuarios desde Parametría se puede marcar `Debe cambiarla al ingresar`; cuando ese usuario inicia sesión, la app lo lleva a Perfil y le pide actualizar la contraseña antes de continuar.
+
 ## Alertas
 
 La app calcula alertas para:
