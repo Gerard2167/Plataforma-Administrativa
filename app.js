@@ -187,7 +187,8 @@ function migrateData(data) {
   migrated.roles = migrated.roles?.length ? migrated.roles : structuredClone(defaultRoles);
   migrated.roles = migrated.roles.map((role) => {
     const extraPermissions = [];
-    if (role.id === "owner") extraPermissions.push("alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:view", "family:manage", "transfers:create", "transfers:authorize");
+    if (role.id === "owner") extraPermissions.push("accounting:view", "alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:view", "family:manage", "transfers:create", "transfers:authorize");
+    if (role.id === "accountant") extraPermissions.push("accounting:view", "transfers:create", "transfers:authorize");
     if (role.id === "operator") extraPermissions.push("alerts:view");
     return { ...role, permissions: [...new Set([...(role.permissions || []), ...extraPermissions])] };
   });
@@ -374,7 +375,7 @@ function canViewFamilyFinances() {
 }
 
 function canAccessAccounting() {
-  return hasPermission("accounting:view") || hasPermission("transfers:create") || hasPermission("transfers:authorize");
+  return hasPermission("accounting:view") || hasPermission("settings:access") || hasPermission("transfers:create") || hasPermission("transfers:authorize");
 }
 
 function render() {
