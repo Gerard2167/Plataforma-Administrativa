@@ -373,6 +373,10 @@ function canViewFamilyFinances() {
   return hasPermission("family:view") || hasPermission("family:manage");
 }
 
+function canAccessAccounting() {
+  return hasPermission("accounting:view") || hasPermission("transfers:create") || hasPermission("transfers:authorize");
+}
+
 function render() {
   const app = byId("app");
   app.innerHTML = session ? layout() : login();
@@ -423,7 +427,7 @@ function login() {
 }
 
 function layout() {
-  const title = session?.mustChangePassword ? "Perfil" : view === "profile" ? "Perfil" : view === "settings" ? "Parametria" : view === "alerts" ? "Alertas" : view === "loans" ? "Prestamos" : activeBusiness ? businessTitle() : "Panel de negocios";
+  const title = session?.mustChangePassword ? "Perfil" : view === "profile" ? "Perfil" : view === "settings" ? "Parametria" : view === "accounting" ? "Contabilidad" : view === "alerts" ? "Alertas" : view === "loans" ? "Prestamos" : activeBusiness ? businessTitle() : "Panel de negocios";
   return `
     <section class="app-shell">
       <aside class="sidebar">
@@ -435,6 +439,7 @@ function layout() {
           <button class="${!activeBusiness && view === "dashboard" ? "active" : ""}" data-nav="dashboard">Inicio <span>⌂</span></button>
           ${hasPermission("alerts:view") ? `<button class="${view === "alerts" ? "active" : ""}" data-nav="alerts">Alertas <span>${visibleAlerts().length}</span></button>` : ""}
           ${hasPermission("loans:view") ? `<button class="${view === "loans" ? "active" : ""}" data-nav="loans">Prestamos <span>${activeLoans().length}</span></button>` : ""}
+          ${canAccessAccounting() ? `<button class="${view === "accounting" ? "active" : ""}" data-nav="accounting">Contabilidad <span>$</span></button>` : ""}
           ${state.businesses.map((business) => `<button class="${activeBusiness === business.id ? "active" : ""}" data-business="${business.id}">${business.name} <span>›</span></button>`).join("")}
           <button class="${view === "profile" ? "active" : ""}" data-nav="profile">Perfil <span>○</span></button>
           ${hasPermission("settings:access") ? `<button class="${view === "settings" ? "active" : ""}" data-nav="settings">Parametria <span>⚙</span></button>` : ""}
@@ -470,6 +475,7 @@ function businessTitle() {
 function topbarHint() {
   if (view === "profile") return "Datos de usuario, rol y cambio de contrasena.";
   if (view === "loans") return "Prestamos hechos desde rubros del negocio o cuentas familiares, con saldo, interes y pagos.";
+  if (view === "accounting") return "Detalle contable, saldos por cuenta y transacciones con autorizacion.";
   if (view === "alerts") return "Vencimientos y avisos operativos segun los roles destinatarios.";
   if (view === "settings") return "Gestiona usuarios, roles, permisos y configuraciones sensibles.";
   if (activeBusiness === "uber") return "Metas diarias, conductores, gastos, prestamos, mantenimiento y utilidad consolidada.";
@@ -485,6 +491,9 @@ function topbarActions() {
   }
   if (view === "alerts") {
     return hasPermission("alerts:manage") ? `<button class="secondary" data-drawer="alert-settings">Configurar alertas</button>` : "";
+  }
+  if (view === "accounting") {
+    return hasPermission("transfers:create") ? `<button class="secondary" data-drawer="transfer">＋ Transaccion</button>` : "";
   }
   if (view === "settings") {
     if (!hasPermission("users:manage")) return "";
@@ -517,6 +526,7 @@ function content() {
   if (session?.mustChangePassword && view !== "profile") return profileView();
   if (view === "profile") return profileView();
   if (view === "loans") return loansView();
+  if (view === "accounting") return accountingView();
   if (view === "alerts") return alertsView();
   if (view === "settings") return settingsView();
   if (activeBusiness === "uber") return uberView();
@@ -680,7 +690,7 @@ function loanCard(loan) {
         <div><dt>Prestado</dt><dd>${money(loan.principal)}</dd></div>
         <div><dt>Capital pendiente</dt><dd>${money(principalBalance)}</dd></div>
         <div><dt>Interes pendiente</dt><dd>${money(interestBalance)}</dd></div>
-        <div><dt>Interes</dt><dd>${loan.interestEnabled ? `${loan.annualRate}% anual · ${loanFrequencyLabel(loan)}` : "Sin interes"}</dd></div>
+        <div><dt>Interes</dt><dd>${loan.interestEnabled ? `${loan.annualRate}% ${loanFrequencyLabel(loan)}` : "Sin interes"}</dd></div>
         <div><dt>Plazo</dt><dd>${loan.termType === "open" ? "Indefinido" : `${loan.termMonths} mes(es)`}</dd></div>
         <div><dt>Proximo corte</dt><dd>${next ? dateText(next.date) : "Pagado"}</dd></div>
         <div><dt>Pagado</dt><dd>${money(loanPaid(loan))}</dd></div>
@@ -732,7 +742,7 @@ function loanPeriodCount(loan) {
 }
 
 function loanPeriodicRate(loan) {
-  return (Number(loan.annualRate || 0) / 100) / (loan.frequency === "biweekly" ? 24 : 12);
+  return Number(loan.annualRate || 0) / 100;
 }
 
 function loanPeriodDate(loan, period) {
@@ -808,6 +818,60 @@ function familyExpenseRecords() {
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 8)
     .map((item) => `<article class="record-row"><div><small>${item.category}</small><strong>${item.description || "Gasto familiar"}</strong></div><div><small>Fecha</small><strong>${dateText(item.date)}</strong></div><div><small>Monto</small><strong>${money(item.amount)}</strong></div>${deleteButton("familyExpense", item.id)}</article>`)
+    .join("");
+}
+
+function accountingView() {
+  if (!canAccessAccounting()) return `<div class="empty">Tu rol no tiene permiso para ver contabilidad.</div>`;
+  const uberIncome = sum(state.uberIncome, "amount");
+  const rentIncome = state.rentals.flatMap((rental) => rental.payments).reduce((total, item) => total + Number(item.amount), 0);
+  const businessExpenses = sum(state.expenses, "amount") + sum(state.maintenances, "cost") + state.rentals.flatMap((rental) => rental.expenses).reduce((total, item) => total + Number(item.amount), 0);
+  const familyExpenses = canViewFamilyFinances() ? sum(state.familyExpenses, "amount") : 0;
+  const receivable = activeLoans().reduce((total, loan) => total + loanBalance(loan), 0);
+  const accountTotal = accountList().reduce((total, account) => total + account.balance, 0);
+  return `
+    ${hasPermission("accounting:view") ? `
+      <div class="metrics">
+        <div class="metric"><span>Ingresos negocio</span><strong>${money(uberIncome + rentIncome)}</strong></div>
+        <div class="metric"><span>Gastos negocio</span><strong>${money(businessExpenses)}</strong></div>
+        <div class="metric"><span>Gastos familiares</span><strong>${canViewFamilyFinances() ? money(familyExpenses) : "Restringido"}</strong></div>
+        <div class="metric"><span>Prestamos por cobrar</span><strong>${money(receivable)}</strong></div>
+        <div class="metric"><span>Saldos en cuentas</span><strong>${money(accountTotal)}</strong></div>
+      </div>
+      <section class="panel">
+        <div class="section-title">
+          <div><h2>Cuentas y rubros</h2><p class="hint">Saldos disponibles para prestamos y movimientos internos.</p></div>
+        </div>
+        <div class="records">${accountRecords()}</div>
+      </section>
+    ` : ""}
+    <section class="panel">
+      ${transfersSettings()}
+    </section>
+  `;
+}
+
+function accountList() {
+  const accounts = [];
+  state.vehicles.forEach((vehicle) => {
+    sortedAllocations(vehicle).forEach((allocation) => {
+      const value = `vehicle:${vehicle.id}:${allocation.id}`;
+      accounts.push({ value, label: `${vehicle.name} · ${allocation.label}`, type: "Uber", balance: accountBalance(value) });
+    });
+  });
+  state.rentals.forEach((rental) => {
+    const value = `rental:${rental.id}:rent`;
+    accounts.push({ value, label: `${rental.property} · Cuenta alquiler`, type: "Alquiler", balance: accountBalance(value) });
+  });
+  accounts.push({ value: "family:general:cash", label: "Cuenta familiar / efectivo", type: "Familia", balance: accountBalance("family:general:cash") });
+  return accounts;
+}
+
+function accountRecords() {
+  const accounts = accountList();
+  if (!accounts.length) return `<div class="empty">Todavia no hay cuentas configuradas.</div>`;
+  return accounts
+    .map((account) => `<article class="record-row"><div><small>${account.type}</small><strong>${account.label}</strong></div><div><small>Saldo</small><strong>${money(account.balance)}</strong></div></article>`)
     .join("");
 }
 
@@ -1157,12 +1221,10 @@ function settingsView() {
       <div class="tabs">
         <button class="${settingsTab === "users" ? "active" : ""}" data-settings-tab="users">Usuarios</button>
         <button class="${settingsTab === "roles" ? "active" : ""}" data-settings-tab="roles">Roles y permisos</button>
-        <button class="${settingsTab === "transfers" ? "active" : ""}" data-settings-tab="transfers">Transacciones</button>
         <button class="${settingsTab === "alerts" ? "active" : ""}" data-settings-tab="alerts">Alertas</button>
       </div>
       ${settingsTab === "users" ? usersSettings() : ""}
       ${settingsTab === "roles" ? rolesSettings() : ""}
-      ${settingsTab === "transfers" ? transfersSettings() : ""}
       ${settingsTab === "alerts" ? alertSettingsView() : ""}
     </section>
   `;
@@ -1474,7 +1536,7 @@ function drawerForm() {
       <div class="field"><label>Dia de pago</label><input name="dueDay" type="number" min="1" max="31" value="30" required /></div>
       <div class="field"><label>Frecuencia de cobro</label><select name="frequency"><option value="monthly">Mensual</option><option value="biweekly">Quincenal</option></select></div>
       <div class="field"><label>Cobra interes</label><select name="interestEnabled"><option value="false">No</option><option value="true">Si</option></select></div>
-      <div class="field"><label>% interes anual</label><input name="annualRate" type="number" step="0.01" min="0" value="0" /></div>
+      <div class="field"><label>% interes por periodo</label><input name="annualRate" type="number" step="0.01" min="0" value="0" /></div>
       <div class="field full"><label>Notas</label><textarea name="notes" placeholder="Condiciones, motivo, acuerdo de pago"></textarea></div>
       <button class="primary full" type="submit">Guardar prestamo</button>
     </form>`;

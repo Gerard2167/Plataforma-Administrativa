@@ -53,7 +53,7 @@ Cada prestamo guarda:
 - Fuente del dinero.
 - Monto prestado.
 - Si cobra interes o no.
-- Interes anual.
+- Porcentaje de interes por periodo.
 - Frecuencia de cobro mensual o quincenal.
 - Tipo de plazo: con plazo o indefinido.
 - Plazo en meses, cuando aplique.
@@ -61,7 +61,7 @@ Cada prestamo guarda:
 - Pagos realizados, separados entre interes cubierto y capital abonado.
 - Saldo pendiente separado entre capital e interes.
 
-El interes se calcula por periodo sobre el saldo de capital pendiente. Si la frecuencia es mensual, usa 12 periodos al ano; si es quincenal, usa 24 periodos al ano.
+El interes se calcula por periodo sobre el saldo de capital pendiente. Si la frecuencia es mensual, el porcentaje ingresado se cobra cada mes; si es quincenal, se cobra cada quincena. Por ejemplo, un prestamo de `200.00` con `5%` quincenal genera `10.00` de interes en el proximo corte.
 
 Cuando se registra un pago, el sistema cubre primero el interes pendiente y luego aplica la diferencia al capital. La pantalla no sugiere cuota estimada para que se registre el monto realmente pagado.
 
@@ -69,7 +69,9 @@ Si el prestamo sale de un rubro de un auto, el sistema descuenta el monto del sa
 
 ## Transacciones
 
-En `Parametria > Transacciones` se pueden registrar solicitudes para mover fondos entre cuentas: rubros acumulados de autos, cuenta de alquiler o cuenta familiar. La solicitud queda pendiente hasta que un usuario con permiso de autorizacion la apruebe o rechace. Al aprobarla, el sistema descuenta el monto de la cuenta origen y lo suma a la cuenta destino.
+En `Contabilidad > Transacciones` se pueden registrar solicitudes para mover fondos entre cuentas: rubros acumulados de autos, cuenta de alquiler o cuenta familiar. La solicitud queda pendiente hasta que un usuario con permiso de autorizacion la apruebe o rechace. Al aprobarla, el sistema descuenta el monto de la cuenta origen y lo suma a la cuenta destino.
+
+La seccion `Contabilidad` muestra el resumen contable, los saldos por cuenta o rubro, y las transacciones. El acceso se controla por permisos de rol: ver contabilidad, solicitar transacciones y autorizar transacciones.
 
 ## Gastos familiares
 
