@@ -75,7 +75,7 @@ En `Contabilidad > Transacciones` se pueden registrar solicitudes para mover fon
 
 La seccion `Contabilidad` muestra el resumen contable, los saldos por cuenta o rubro, y las transacciones. El acceso se controla por permisos de rol: ver contabilidad, solicitar transacciones y autorizar transacciones.
 
-Desde `Contabilidad` tambien se pueden crear cuentas contables personalizadas, como bancos, efectivo, reservas o tarjetas. Estas cuentas quedan disponibles como origen o destino de transacciones y como fuente para nuevos prestamos. El acceso se controla con el permiso `Administrar cuentas contables`.
+Desde `Contabilidad` tambien se pueden crear y editar cuentas contables personalizadas, como bancos, efectivo, reservas o tarjetas. Estas cuentas quedan disponibles como origen o destino de transacciones y como fuente para nuevos prestamos. El usuario con permiso puede cambiar nombre, tipo, descripcion, saldo inicial/actual o borrar la cuenta. El acceso se controla con el permiso `Administrar cuentas contables`.
 
 ## Gastos familiares
 

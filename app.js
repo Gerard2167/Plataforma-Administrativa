@@ -909,7 +909,7 @@ function accountRecords() {
   const accounts = accountList();
   if (!accounts.length) return `<div class="empty">Todavia no hay cuentas configuradas.</div>`;
   return accounts
-    .map((account) => `<article class="record-row"><div><small>${account.type}</small><strong>${account.label}</strong></div><div><small>Saldo</small><strong>${money(account.balance)}</strong></div></article>`)
+    .map((account) => `<article class="record-row"><div><small>${account.type}</small><strong>${account.label}</strong></div><div><small>Saldo</small><strong>${money(account.balance)}</strong></div>${account.value.startsWith("custom:") && hasPermission("accounts:manage") ? `<button class="ghost" data-drawer="account" data-id="${account.value.split(":")[1]}">Editar</button><button class="ghost" data-delete="account" data-id="${account.value.split(":")[1]}">Borrar</button>` : ""}</article>`)
     .join("");
 }
 
@@ -1560,11 +1560,14 @@ function drawerForm() {
     </form>`;
   }
   if (drawer.type === "account") {
+    const account = state.customAccounts.find((item) => item.id === drawer.id) || { id: "", name: "", type: "Banco", description: "" };
+    const balance = account.id ? accountBalance(`custom:${account.id}:main`) : 0;
     return `<form id="drawerForm" data-form="account" class="form-grid">
-      <div class="field"><label>Nombre de cuenta</label><input name="name" placeholder="Banco, efectivo, reserva, tarjeta" required /></div>
-      <div class="field"><label>Tipo</label><select name="type"><option>Banco</option><option>Efectivo</option><option>Ahorro</option><option>Tarjeta</option><option>Reserva</option><option>Otro</option></select></div>
-      <div class="field"><label>Saldo inicial</label><input name="openingBalance" type="number" step="0.01" value="0" required /></div>
-      <div class="field full"><label>Descripcion</label><textarea name="description"></textarea></div>
+      <input type="hidden" name="id" value="${account.id}" />
+      <div class="field"><label>Nombre de cuenta</label><input name="name" value="${account.name}" placeholder="Banco, efectivo, reserva, tarjeta" required /></div>
+      <div class="field"><label>Tipo</label><select name="type">${["Banco", "Efectivo", "Ahorro", "Tarjeta", "Reserva", "Otro"].map((type) => `<option ${account.type === type ? "selected" : ""}>${type}</option>`).join("")}</select></div>
+      <div class="field"><label>Saldo inicial / actual</label><input name="openingBalance" type="number" step="0.01" value="${balance}" required /></div>
+      <div class="field full"><label>Descripcion</label><textarea name="description">${account.description || ""}</textarea></div>
       <button class="primary full" type="submit">Guardar cuenta</button>
     </form>`;
   }
@@ -1867,16 +1870,20 @@ function registerLoanPayment(data) {
 }
 
 function createAccount(data) {
-  const id = crypto.randomUUID();
+  const id = data.id || crypto.randomUUID();
   const account = {
     id,
     name: data.name,
     type: data.type || "Cuenta",
     description: data.description,
-    createdBy: session.email,
-    createdAt: new Date().toISOString(),
+    createdBy: state.customAccounts.find((item) => item.id === id)?.createdBy || session.email,
+    createdAt: state.customAccounts.find((item) => item.id === id)?.createdAt || new Date().toISOString(),
+    updatedBy: session.email,
+    updatedAt: new Date().toISOString(),
   };
-  state.customAccounts.push(account);
+  const index = state.customAccounts.findIndex((item) => item.id === id);
+  if (index >= 0) state.customAccounts[index] = account;
+  else state.customAccounts.push(account);
   state.accountBalances = state.accountBalances || {};
   state.accountBalances[`custom:${id}:main`] = Number(data.openingBalance || 0);
 }
@@ -2003,6 +2010,10 @@ function saveAlertSettings(formData, data) {
 }
 
 function deleteRecord(type, id) {
+  if (type === "account") {
+    deleteAccount(id);
+    return;
+  }
   if (!hasPermission("records:delete")) {
     alert("Tu rol no tiene permiso para borrar registros.");
     return;
@@ -2018,6 +2029,18 @@ function deleteRecord(type, id) {
   if (type === "rentExpense") state.rentals[0].expenses = state.rentals[0].expenses.filter((item) => item.id !== id);
   if (type === "familyExpense") state.familyExpenses = state.familyExpenses.filter((item) => item.id !== id);
   if (type === "loan") deleteLoan(id);
+  saveData();
+  render();
+}
+
+function deleteAccount(id) {
+  if (!hasPermission("accounts:manage")) {
+    alert("Tu rol no tiene permiso para borrar cuentas.");
+    return;
+  }
+  if (!confirm("Borrar esta cuenta personalizada?")) return;
+  state.customAccounts = state.customAccounts.filter((item) => item.id !== id);
+  if (state.accountBalances) delete state.accountBalances[`custom:${id}:main`];
   saveData();
   render();
 }
