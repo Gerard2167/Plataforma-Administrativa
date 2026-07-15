@@ -17,8 +17,8 @@ El rol Propietario puede entrar a Parametría para:
 
 - Crear y editar usuarios.
 - Crear roles predeterminados.
-- Asignar permisos por funcionalidad, como ingresos, gastos, mantenimientos, contabilidad, autorización de transferencias, parametría y distribución de Uber.
-- Registrar y autorizar solicitudes de transferencia.
+- Asignar permisos por funcionalidad, como ingresos, gastos, mantenimientos, contabilidad, solicitud de transacciones, autorización de transacciones, parametría y distribución de Uber.
+- Registrar solicitudes de transacción y autorizar movimientos entre cuentas.
 - Configurar alertas por rol.
 
 ## Perfil y contraseña temporal
@@ -55,14 +55,21 @@ Cada prestamo guarda:
 - Si cobra interes o no.
 - Interes anual.
 - Frecuencia de cobro mensual o quincenal.
-- Plazo en meses.
+- Tipo de plazo: con plazo o indefinido.
+- Plazo en meses, cuando aplique.
 - Dia estimado de pago.
-- Pagos realizados.
-- Saldo pendiente.
+- Pagos realizados, separados entre interes cubierto y capital abonado.
+- Saldo pendiente separado entre capital e interes.
 
 El interes se calcula por periodo sobre el saldo de capital pendiente. Si la frecuencia es mensual, usa 12 periodos al ano; si es quincenal, usa 24 periodos al ano.
 
-Si el prestamo sale de un rubro de un auto, el sistema descuenta el monto del saldo acumulado del rubro. Cuando se registra un pago, el dinero vuelve al mismo rubro.
+Cuando se registra un pago, el sistema cubre primero el interes pendiente y luego aplica la diferencia al capital. La pantalla no sugiere cuota estimada para que se registre el monto realmente pagado.
+
+Si el prestamo sale de un rubro de un auto, el sistema descuenta el monto del saldo acumulado del rubro. Cuando se registra un pago, el dinero vuelve al mismo rubro o cuenta origen.
+
+## Transacciones
+
+En `Parametria > Transacciones` se pueden registrar solicitudes para mover fondos entre cuentas: rubros acumulados de autos, cuenta de alquiler o cuenta familiar. La solicitud queda pendiente hasta que un usuario con permiso de autorizacion la apruebe o rechace. Al aprobarla, el sistema descuenta el monto de la cuenta origen y lo suma a la cuenta destino.
 
 ## Gastos familiares
 

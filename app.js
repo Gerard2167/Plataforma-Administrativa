@@ -13,7 +13,8 @@ const permissions = [
   { id: "expense:create", label: "Ingresar gastos" },
   { id: "maintenance:create", label: "Ingresar mantenimientos" },
   { id: "accounting:view", label: "Ver contabilidad" },
-  { id: "transfers:authorize", label: "Autorizar transferencias" },
+  { id: "transfers:create", label: "Solicitar transacciones" },
+  { id: "transfers:authorize", label: "Autorizar transacciones" },
   { id: "settings:access", label: "Ingresar a parametria" },
   { id: "users:manage", label: "Crear usuarios y roles" },
   { id: "business:manage", label: "Administrar negocios" },
@@ -45,7 +46,7 @@ const defaultRoles = [
   {
     id: "accountant",
     name: "Contabilidad",
-    description: "Revisa contabilidad y autoriza transferencias.",
+    description: "Revisa contabilidad y autoriza transacciones.",
     permissions: ["accounting:view", "transfers:authorize"],
   },
 ];
@@ -149,6 +150,7 @@ const initialData = {
   transfers: [],
   loans: [],
   familyExpenses: [],
+  accountBalances: {},
   alertSettings: structuredClone(defaultAlertSettings),
 };
 
@@ -185,7 +187,7 @@ function migrateData(data) {
   migrated.roles = migrated.roles?.length ? migrated.roles : structuredClone(defaultRoles);
   migrated.roles = migrated.roles.map((role) => {
     const extraPermissions = [];
-    if (role.id === "owner") extraPermissions.push("alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:view", "family:manage");
+    if (role.id === "owner") extraPermissions.push("alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:view", "family:manage", "transfers:create", "transfers:authorize");
     if (role.id === "operator") extraPermissions.push("alerts:view");
     return { ...role, permissions: [...new Set([...(role.permissions || []), ...extraPermissions])] };
   });
@@ -193,8 +195,9 @@ function migrateData(data) {
   migrated.users = migrated.users.map((user) => ({ ...user, mustChangePassword: Boolean(user.mustChangePassword) }));
   migrated.transfers = migrated.transfers || [];
   migrated.loans = migrated.loans || [];
-  migrated.loans = migrated.loans.map((loan) => ({ ...loan, frequency: loan.frequency || "monthly" }));
+  migrated.loans = migrated.loans.map((loan) => ({ ...loan, frequency: loan.frequency || "monthly", termType: loan.termType || "fixed" }));
   migrated.familyExpenses = migrated.familyExpenses || [];
+  migrated.accountBalances = migrated.accountBalances || {};
   migrated.incomeDistributions = migrated.incomeDistributions || [];
   migrated.alertSettings = {
     ...structuredClone(defaultAlertSettings),
@@ -634,13 +637,15 @@ async function updateOwnPassword(password) {
 function loansView() {
   if (!hasPermission("loans:view")) return `<div class="empty">Tu rol no tiene permiso para ver prestamos.</div>`;
   const totalPrincipal = state.loans.reduce((total, loan) => total + Number(loan.principal || 0), 0);
-  const totalDue = state.loans.reduce((total, loan) => total + loanTotalDue(loan), 0);
+  const capitalDue = state.loans.reduce((total, loan) => total + loanPrincipalBalance(loan), 0);
+  const interestDue = state.loans.reduce((total, loan) => total + loanInterestBalance(loan), 0);
   const totalPaid = state.loans.reduce((total, loan) => total + loanPaid(loan), 0);
   const balance = state.loans.reduce((total, loan) => total + loanBalance(loan), 0);
   return `
     <div class="metrics">
       <div class="metric"><span>Prestado</span><strong>${money(totalPrincipal)}</strong></div>
-      <div class="metric"><span>Total a cobrar</span><strong>${money(totalDue)}</strong></div>
+      <div class="metric"><span>Capital pendiente</span><strong>${money(capitalDue)}</strong></div>
+      <div class="metric"><span>Interes pendiente</span><strong>${money(interestDue)}</strong></div>
       <div class="metric"><span>Pagado</span><strong>${money(totalPaid)}</strong></div>
       <div class="metric"><span>Saldo</span><strong>${money(balance)}</strong></div>
     </div>
@@ -660,6 +665,7 @@ function loanCard(loan) {
   const balance = loanBalance(loan);
   const next = nextLoanPayment(loan);
   const principalBalance = loanPrincipalBalance(loan);
+  const interestBalance = loanInterestBalance(loan);
   return `
     <article class="loan-card">
       <header>
@@ -672,12 +678,12 @@ function loanCard(loan) {
       </header>
       <dl>
         <div><dt>Prestado</dt><dd>${money(loan.principal)}</dd></div>
-        <div><dt>Total a pagar</dt><dd>${money(loanTotalDue(loan))}</dd></div>
+        <div><dt>Capital pendiente</dt><dd>${money(principalBalance)}</dd></div>
+        <div><dt>Interes pendiente</dt><dd>${money(interestBalance)}</dd></div>
         <div><dt>Interes</dt><dd>${loan.interestEnabled ? `${loan.annualRate}% anual · ${loanFrequencyLabel(loan)}` : "Sin interes"}</dd></div>
-        <div><dt>Cuota estimada</dt><dd>${money(loanMonthlyPayment(loan))}</dd></div>
-        <div><dt>Proximo pago</dt><dd>${next ? `${dateText(next.date)} · ${money(next.amount)}` : "Pagado"}</dd></div>
+        <div><dt>Plazo</dt><dd>${loan.termType === "open" ? "Indefinido" : `${loan.termMonths} mes(es)`}</dd></div>
+        <div><dt>Proximo corte</dt><dd>${next ? dateText(next.date) : "Pagado"}</dd></div>
         <div><dt>Pagado</dt><dd>${money(loanPaid(loan))}</dd></div>
-        <div><dt>Saldo capital</dt><dd>${money(principalBalance)}</dd></div>
       </dl>
       <p>${loan.notes || ""}</p>
       <div class="records compact-records">${loanPayments(loan)}</div>
@@ -694,7 +700,7 @@ function loanPayments(loan) {
   return loan.payments
     .slice()
     .sort((a, b) => b.date.localeCompare(a.date))
-    .map((payment) => `<article class="record-row"><div><small>Pago</small><strong>${payment.notes || "Abono"}</strong></div><div><small>Fecha</small><strong>${dateText(payment.date)}</strong></div><div><small>Monto</small><strong>${money(payment.amount)}</strong></div></article>`)
+    .map((payment) => `<article class="record-row"><div><small>Pago</small><strong>${payment.notes || "Abono"}</strong></div><div><small>Fecha</small><strong>${dateText(payment.date)}</strong></div><div><small>Total</small><strong>${money(payment.amount)}</strong></div><div><small>Interes</small><strong>${money(payment.interestPaid || 0)}</strong></div><div><small>Capital</small><strong>${money(payment.principalPaid || 0)}</strong></div></article>`)
     .join("");
 }
 
@@ -703,7 +709,8 @@ function activeLoans() {
 }
 
 function loanTotalDue(loan) {
-  return loanSchedule(loan).reduce((total, period) => total + period.amount, 0);
+  const status = loanStatusAt(loan, today());
+  return status.principalBalance + status.interestBalance;
 }
 
 function loanPaid(loan) {
@@ -711,37 +718,13 @@ function loanPaid(loan) {
 }
 
 function loanBalance(loan) {
-  return Math.max(0, loanTotalDue(loan) - loanPaid(loan));
-}
-
-function loanMonthlyPayment(loan) {
-  const next = nextLoanPayment(loan);
-  if (next) return next.amount;
-  return loanTotalDue(loan) / Math.max(1, loanPeriodCount(loan));
+  return Math.max(0, loanTotalDue(loan));
 }
 
 function nextLoanPayment(loan) {
   const balance = loanBalance(loan);
   if (balance <= 0) return null;
-  const paymentsMade = loan.payments?.length || 0;
-  const period = loanSchedule(loan)[Math.min(paymentsMade, loanSchedule(loan).length - 1)];
-  return period ? { date: period.date, amount: Math.min(balance, period.amount) } : null;
-}
-
-function loanSchedule(loan) {
-  const principal = Number(loan.principal || 0);
-  const periods = loanPeriodCount(loan);
-  const principalPortion = principal / periods;
-  const rate = loan.interestEnabled ? loanPeriodicRate(loan) : 0;
-  let principalBalance = principal;
-  return Array.from({ length: periods }, (_, index) => {
-    const interest = principalBalance * rate;
-    const principalPayment = Math.min(principalBalance, principalPortion);
-    const amount = principalPayment + interest;
-    const date = loanPeriodDate(loan, index + 1);
-    principalBalance = Math.max(0, principalBalance - principalPayment);
-    return { period: index + 1, date, principal: principalPayment, interest, amount, principalBalance };
-  });
+  return { date: nextLoanPeriodDate(loan, today()) };
 }
 
 function loanPeriodCount(loan) {
@@ -764,19 +747,54 @@ function loanPeriodDate(loan, period) {
 }
 
 function loanPrincipalBalance(loan) {
-  const schedule = loanSchedule(loan);
-  const paid = loanPaid(loan);
-  let remainingPaid = paid;
+  return loanStatusAt(loan, today()).principalBalance;
+}
+
+function loanInterestBalance(loan) {
+  return loanStatusAt(loan, today()).interestBalance;
+}
+
+function loanStatusAt(loan, throughDate) {
+  const endDate = new Date(`${throughDate}T00:00:00`);
+  const payments = (loan.payments || [])
+    .filter((payment) => new Date(`${payment.date}T00:00:00`) <= endDate)
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
   let principalBalance = Number(loan.principal || 0);
-  schedule.forEach((period) => {
-    if (remainingPaid <= 0) return;
-    const interestPaid = Math.min(remainingPaid, period.interest);
-    remainingPaid -= interestPaid;
-    const principalPaid = Math.min(remainingPaid, period.principal);
-    remainingPaid -= principalPaid;
-    principalBalance = Math.max(0, principalBalance - principalPaid);
+  let interestBalance = 0;
+  let currentPeriod = 1;
+  payments.forEach((payment) => {
+    const paymentDate = new Date(`${payment.date}T00:00:00`);
+    while (principalBalance > 0) {
+      const periodDate = new Date(`${loanPeriodDate(loan, currentPeriod)}T00:00:00`);
+      if (periodDate > paymentDate) break;
+      interestBalance += principalBalance * (loan.interestEnabled ? loanPeriodicRate(loan) : 0);
+      currentPeriod += 1;
+    }
+    const amount = Number(payment.amount || 0);
+    const interestPaid = Math.min(amount, interestBalance);
+    interestBalance -= interestPaid;
+    const principalPaid = Math.min(amount - interestPaid, principalBalance);
+    principalBalance -= principalPaid;
   });
-  return principalBalance;
+  while (principalBalance > 0) {
+    const periodDate = new Date(`${loanPeriodDate(loan, currentPeriod)}T00:00:00`);
+    if (periodDate > endDate) break;
+    interestBalance += principalBalance * (loan.interestEnabled ? loanPeriodicRate(loan) : 0);
+    currentPeriod += 1;
+  }
+  return { principalBalance: Math.max(0, principalBalance), interestBalance: Math.max(0, interestBalance) };
+}
+
+function nextLoanPeriodDate(loan, fromDate) {
+  let period = 1;
+  const from = new Date(`${fromDate}T00:00:00`);
+  while (period < 600) {
+    const date = loanPeriodDate(loan, period);
+    if (new Date(`${date}T00:00:00`) > from) return date;
+    period += 1;
+  }
+  return loanPeriodDate(loan, period);
 }
 
 function loanFrequencyLabel(loan) {
@@ -794,6 +812,10 @@ function familyExpenseRecords() {
 }
 
 function loanSourceOptions() {
+  return accountOptions();
+}
+
+function accountOptions() {
   const options = [];
   state.vehicles.forEach((vehicle) => {
     sortedAllocations(vehicle).forEach((allocation) => {
@@ -811,6 +833,10 @@ function loanSourceOptions() {
 }
 
 function parseLoanSource(value) {
+  return parseAccount(value);
+}
+
+function parseAccount(value) {
   const [sourceType, sourceId, allocationId] = value.split(":");
   let sourceLabel = "Cuenta familiar";
   if (sourceType === "vehicle") {
@@ -822,7 +848,31 @@ function parseLoanSource(value) {
     const rental = state.rentals.find((item) => item.id === sourceId);
     sourceLabel = `${rental?.property || "Alquiler"} · Cuenta alquiler`;
   }
-  return { sourceType, sourceId, allocationId, sourceLabel };
+  return { sourceType, sourceId, allocationId, sourceLabel, value };
+}
+
+function accountBalance(account) {
+  const parsed = typeof account === "string" ? parseAccount(account) : account;
+  const allocation = accountAllocation(parsed);
+  if (allocation) return Number(allocation.balance || 0);
+  return Number(state.accountBalances?.[parsed.value] || 0);
+}
+
+function adjustAccountBalance(account, amount) {
+  const parsed = typeof account === "string" ? parseAccount(account) : account;
+  const allocation = accountAllocation(parsed);
+  if (allocation) {
+    allocation.balance = Number(allocation.balance || 0) + amount;
+    return;
+  }
+  state.accountBalances = state.accountBalances || {};
+  state.accountBalances[parsed.value] = Number(state.accountBalances[parsed.value] || 0) + amount;
+}
+
+function accountAllocation(account) {
+  if (account.sourceType !== "vehicle") return null;
+  const vehicle = state.vehicles.find((item) => item.id === account.sourceId);
+  return vehicle?.allocations?.find((item) => item.id === account.allocationId) || null;
 }
 
 function alertsView() {
@@ -1107,7 +1157,7 @@ function settingsView() {
       <div class="tabs">
         <button class="${settingsTab === "users" ? "active" : ""}" data-settings-tab="users">Usuarios</button>
         <button class="${settingsTab === "roles" ? "active" : ""}" data-settings-tab="roles">Roles y permisos</button>
-        <button class="${settingsTab === "transfers" ? "active" : ""}" data-settings-tab="transfers">Transferencias</button>
+        <button class="${settingsTab === "transfers" ? "active" : ""}" data-settings-tab="transfers">Transacciones</button>
         <button class="${settingsTab === "alerts" ? "active" : ""}" data-settings-tab="alerts">Alertas</button>
       </div>
       ${settingsTab === "users" ? usersSettings() : ""}
@@ -1159,8 +1209,8 @@ function transfersSettings() {
   const total = sum(state.transfers.filter((item) => item.status === "Pendiente"), "amount");
   return `
     <div class="section-title">
-      <div><h2>Transferencias</h2><p class="hint">Modulo inicial para solicitudes y autorizaciones segun permiso.</p></div>
-      ${hasPermission("transfers:authorize") ? `<button class="primary" data-drawer="transfer">Registrar solicitud</button>` : ""}
+      <div><h2>Transacciones</h2><p class="hint">Movimientos de fondos entre cuentas con autorizacion administrativa.</p></div>
+      ${hasPermission("transfers:create") ? `<button class="primary" data-drawer="transfer">Registrar solicitud</button>` : ""}
     </div>
     <div class="metrics">
       <div class="metric"><span>Pendientes</span><strong>${state.transfers.filter((item) => item.status === "Pendiente").length}</strong></div>
@@ -1169,7 +1219,7 @@ function transfersSettings() {
       <div class="metric"><span>Rechazadas</span><strong>${state.transfers.filter((item) => item.status === "Rechazada").length}</strong></div>
     </div>
     <div class="records">
-      ${state.transfers.length ? state.transfers.map((item) => `<article class="record-row"><div><small>Destino</small><strong>${item.to}</strong></div><div><small>Monto</small><strong>${money(item.amount)}</strong></div><div><small>Estado</small><strong>${item.status}</strong></div>${hasPermission("transfers:authorize") && item.status === "Pendiente" ? `<button class="ghost" data-transfer="approve" data-id="${item.id}">Aprobar</button><button class="ghost" data-transfer="reject" data-id="${item.id}">Rechazar</button>` : ""}</article>`).join("") : `<div class="empty">No hay transferencias registradas.</div>`}
+      ${state.transfers.length ? state.transfers.map((item) => `<article class="record-row"><div><small>Origen</small><strong>${item.fromLabel || "Sin origen"}</strong></div><div><small>Destino</small><strong>${item.toLabel || item.to || "Sin destino"}</strong></div><div><small>Monto</small><strong>${money(item.amount)}</strong></div><div><small>Estado</small><strong>${item.status}</strong></div>${hasPermission("transfers:authorize") && item.status === "Pendiente" ? `<button class="ghost" data-transfer="approve" data-id="${item.id}">Aprobar</button><button class="ghost" data-transfer="reject" data-id="${item.id}">Rechazar</button>` : ""}</article>`).join("") : `<div class="empty">No hay transacciones registradas.</div>`}
     </div>
   `;
 }
@@ -1394,7 +1444,8 @@ function drawerForm() {
   }
   if (drawer.type === "transfer") {
     return `<form id="drawerForm" data-form="transfer" class="form-grid">
-      <div class="field"><label>Destino</label><input name="to" required /></div>
+      <div class="field"><label>Cuenta origen</label><select name="from" required>${accountOptions()}</select></div>
+      <div class="field"><label>Cuenta destino</label><select name="to" required>${accountOptions()}</select></div>
       <div class="field"><label>Monto</label><input name="amount" type="number" step="0.01" min="0" required /></div>
       <div class="field full"><label>Motivo</label><textarea name="reason"></textarea></div>
       <button class="primary full" type="submit">Guardar solicitud</button>
@@ -1418,7 +1469,8 @@ function drawerForm() {
       <div class="field"><label>Fuente del dinero</label><select name="source" required>${loanSourceOptions()}</select></div>
       <div class="field"><label>Monto prestado</label><input name="principal" type="number" step="0.01" min="0" required /></div>
       <div class="field"><label>Fecha inicio</label><input name="startDate" type="date" value="${today()}" required /></div>
-      <div class="field"><label>Meses plazo</label><input name="termMonths" type="number" min="1" value="1" required /></div>
+      <div class="field"><label>Tipo de plazo</label><select name="termType"><option value="fixed">Con plazo</option><option value="open">Indefinido</option></select></div>
+      <div class="field"><label>Meses plazo</label><input name="termMonths" type="number" min="1" value="1" /></div>
       <div class="field"><label>Dia de pago</label><input name="dueDay" type="number" min="1" max="31" value="30" required /></div>
       <div class="field"><label>Frecuencia de cobro</label><select name="frequency"><option value="monthly">Mensual</option><option value="biweekly">Quincenal</option></select></div>
       <div class="field"><label>Cobra interes</label><select name="interestEnabled"><option value="false">No</option><option value="true">Si</option></select></div>
@@ -1433,7 +1485,8 @@ function drawerForm() {
     return `<form id="drawerForm" data-form="loan-payment" class="form-grid">
       <input type="hidden" name="loanId" value="${loan.id}" />
       <div class="field"><label>Fecha</label><input name="date" type="date" value="${today()}" required /></div>
-      <div class="field"><label>Monto</label><input name="amount" type="number" step="0.01" min="0" value="${next ? next.amount.toFixed(2) : loanBalance(loan).toFixed(2)}" required /></div>
+      <div class="field"><label>Monto pagado</label><input name="amount" type="number" step="0.01" min="0" required /></div>
+      <div class="field full"><label>Referencia</label><input name="reference" placeholder="${next ? `Proximo corte: ${dateText(next.date)}` : "Prestamo pagado"}" /></div>
       <div class="field full"><label>Nota</label><textarea name="notes">Pago de prestamo</textarea></div>
       <button class="primary full" type="submit">Guardar pago</button>
     </form>`;
@@ -1622,7 +1675,7 @@ function handleForm(event) {
   if (type === "business") state.businesses.push({ id: slug(data.name), name: data.name, type: data.type, status: data.status });
   if (type === "user") saveUser(data);
   if (type === "role") saveRole(new FormData(form), data);
-  if (type === "transfer") state.transfers.push({ id: crypto.randomUUID(), ...data, amount: Number(data.amount), status: "Pendiente", requestedBy: session.email });
+  if (type === "transfer") createTransfer(data);
   if (type === "alert-settings") saveAlertSettings(new FormData(form), data);
   if (type === "loan") createLoan(data);
   if (type === "loan-payment") registerLoanPayment(data);
@@ -1647,7 +1700,7 @@ function allowedForForm(type) {
     business: "business:manage",
     user: "users:manage",
     role: "users:manage",
-    transfer: "transfers:authorize",
+    transfer: "transfers:create",
     "alert-settings": "alerts:manage",
     loan: "loans:manage",
     "loan-payment": "loans:manage",
@@ -1665,6 +1718,7 @@ function createLoan(data) {
     ...source,
     principal,
     startDate: data.startDate,
+    termType: data.termType || "fixed",
     termMonths: Number(data.termMonths || 1),
     dueDay: Number(data.dueDay || 30),
     frequency: data.frequency || "monthly",
@@ -1683,10 +1737,30 @@ function registerLoanPayment(data) {
   const loan = state.loans.find((item) => item.id === data.loanId);
   if (!loan) return;
   const amount = Number(data.amount || 0);
+  const status = loanStatusAt(loan, data.date);
+  const interestPaid = Math.min(amount, status.interestBalance);
+  const principalPaid = Math.min(amount - interestPaid, status.principalBalance);
   loan.payments = loan.payments || [];
-  loan.payments.push({ id: crypto.randomUUID(), date: data.date, amount, notes: data.notes });
+  loan.payments.push({ id: crypto.randomUUID(), date: data.date, amount, interestPaid, principalPaid, reference: data.reference, notes: data.notes });
   depositToLoanSource(loan, amount);
   if (loanBalance(loan) <= 0) loan.status = "Pagado";
+}
+
+function createTransfer(data) {
+  const from = parseAccount(data.from);
+  const to = parseAccount(data.to);
+  state.transfers.push({
+    id: crypto.randomUUID(),
+    from: data.from,
+    to: data.to,
+    fromLabel: from.sourceLabel,
+    toLabel: to.sourceLabel,
+    amount: Number(data.amount),
+    reason: data.reason,
+    status: "Pendiente",
+    requestedBy: session.email,
+    requestedAt: new Date().toISOString(),
+  });
 }
 
 function withdrawFromLoanSource(loan, amount) {
@@ -1833,8 +1907,19 @@ function updateTransfer(id, action) {
   if (!hasPermission("transfers:authorize")) return;
   const transfer = state.transfers.find((item) => item.id === id);
   if (!transfer) return;
-  transfer.status = action === "approve" ? "Aprobada" : "Rechazada";
+  if (action === "approve" && transfer.status === "Pendiente") {
+    if (!transfer.from || !transfer.to) {
+      alert("Esta transaccion no tiene cuenta origen y destino. Registra una nueva solicitud con las cuentas completas.");
+      return;
+    }
+    adjustAccountBalance(transfer.from, -Number(transfer.amount || 0));
+    adjustAccountBalance(transfer.to, Number(transfer.amount || 0));
+    transfer.status = "Aprobada";
+  } else if (action === "reject") {
+    transfer.status = "Rechazada";
+  }
   transfer.authorizedBy = session.email;
+  transfer.authorizedAt = new Date().toISOString();
   saveData();
   render();
 }
