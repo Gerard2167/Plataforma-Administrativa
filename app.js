@@ -196,7 +196,18 @@ function migrateData(data) {
   migrated.users = migrated.users.map((user) => ({ ...user, mustChangePassword: Boolean(user.mustChangePassword) }));
   migrated.transfers = migrated.transfers || [];
   migrated.loans = migrated.loans || [];
-  migrated.loans = migrated.loans.map((loan) => ({ ...loan, frequency: loan.frequency || "monthly", termType: loan.termType || "fixed" }));
+  migrated.loans = migrated.loans.map((loan) => {
+    const startDate = loan.startDate || today();
+    const firstPaymentDate = loan.firstPaymentDate || legacyFirstLoanPaymentDate({ ...loan, startDate });
+    return {
+      ...loan,
+      startDate,
+      firstPaymentDate,
+      frequency: loan.frequency || "monthly",
+      termType: loan.termType || "fixed",
+      dueDay: Number(loan.dueDay || firstPaymentDate.slice(8, 10) || 30),
+    };
+  });
   migrated.familyExpenses = migrated.familyExpenses || [];
   migrated.accountBalances = migrated.accountBalances || {};
   migrated.incomeDistributions = migrated.incomeDistributions || [];
@@ -239,6 +250,17 @@ function normalizeAllocations(vehicle) {
     }));
   }
   return structuredClone(defaultDistribution);
+}
+
+function legacyFirstLoanPaymentDate(loan) {
+  const date = new Date(`${loan.startDate || today()}T00:00:00`);
+  if ((loan.frequency || "monthly") === "biweekly") {
+    date.setDate(date.getDate() + 14);
+  } else {
+    date.setMonth(date.getMonth() + 1);
+    date.setDate(Math.min(Number(loan.dueDay || date.getDate()), 28));
+  }
+  return date.toISOString().slice(0, 10);
 }
 
 function saveData() {
@@ -692,6 +714,8 @@ function loanCard(loan) {
         <div><dt>Capital pendiente</dt><dd>${money(principalBalance)}</dd></div>
         <div><dt>Interes pendiente</dt><dd>${money(interestBalance)}</dd></div>
         <div><dt>Interes</dt><dd>${loan.interestEnabled ? `${loan.annualRate}% ${loanFrequencyLabel(loan)}` : "Sin interes"}</dd></div>
+        <div><dt>Fecha prestamo</dt><dd>${dateText(loan.startDate)}</dd></div>
+        <div><dt>Primer pago</dt><dd>${dateText(loan.firstPaymentDate || loanPeriodDate(loan, 1))}</dd></div>
         <div><dt>Plazo</dt><dd>${loan.termType === "open" ? "Indefinido" : `${loan.termMonths} mes(es)`}</dd></div>
         <div><dt>Proximo corte</dt><dd>${next ? dateText(next.date) : "Pagado"}</dd></div>
         <div><dt>Pagado</dt><dd>${money(loanPaid(loan))}</dd></div>
@@ -747,12 +771,17 @@ function loanPeriodicRate(loan) {
 }
 
 function loanPeriodDate(loan, period) {
-  const date = new Date(`${loan.startDate}T00:00:00`);
+  const date = new Date(`${loan.firstPaymentDate || legacyFirstLoanPaymentDate(loan)}T00:00:00`);
   if (loan.frequency === "biweekly") {
-    date.setDate(date.getDate() + period * 14);
+    date.setDate(date.getDate() + (period - 1) * 14);
   } else {
-    date.setMonth(date.getMonth() + period);
-    date.setDate(Math.min(Number(loan.dueDay || date.getDate()), 28));
+    const day = Number(loan.dueDay || date.getDate());
+    date.setDate(1);
+    date.setMonth(date.getMonth() + (period - 1));
+    const targetMonth = date.getMonth();
+    date.setMonth(targetMonth + 1, 0);
+    const lastDay = date.getDate();
+    date.setMonth(targetMonth, Math.min(day, lastDay));
   }
   return date.toISOString().slice(0, 10);
 }
@@ -1531,10 +1560,10 @@ function drawerForm() {
       <div class="field"><label>Persona</label><input name="borrower" placeholder="Familiar o tercero" required /></div>
       <div class="field"><label>Fuente del dinero</label><select name="source" required>${loanSourceOptions()}</select></div>
       <div class="field"><label>Monto prestado</label><input name="principal" type="number" step="0.01" min="0" required /></div>
-      <div class="field"><label>Fecha inicio</label><input name="startDate" type="date" value="${today()}" required /></div>
+      <div class="field"><label>Fecha del prestamo</label><input name="startDate" type="date" value="${today()}" required /></div>
+      <div class="field"><label>Fecha primer pago</label><input name="firstPaymentDate" type="date" value="${today(14)}" required /></div>
       <div class="field"><label>Tipo de plazo</label><select name="termType"><option value="fixed">Con plazo</option><option value="open">Indefinido</option></select></div>
       <div class="field"><label>Meses plazo</label><input name="termMonths" type="number" min="1" value="1" /></div>
-      <div class="field"><label>Dia de pago</label><input name="dueDay" type="number" min="1" max="31" value="30" required /></div>
       <div class="field"><label>Frecuencia de cobro</label><select name="frequency"><option value="monthly">Mensual</option><option value="biweekly">Quincenal</option></select></div>
       <div class="field"><label>Cobra interes</label><select name="interestEnabled"><option value="false">No</option><option value="true">Si</option></select></div>
       <div class="field"><label>% interes por periodo</label><input name="annualRate" type="number" step="0.01" min="0" value="0" /></div>
@@ -1781,9 +1810,10 @@ function createLoan(data) {
     ...source,
     principal,
     startDate: data.startDate,
+    firstPaymentDate: data.firstPaymentDate || data.startDate,
     termType: data.termType || "fixed",
     termMonths: Number(data.termMonths || 1),
-    dueDay: Number(data.dueDay || 30),
+    dueDay: Number((data.firstPaymentDate || data.startDate || today()).slice(8, 10)),
     frequency: data.frequency || "monthly",
     interestEnabled: data.interestEnabled === "true",
     annualRate: Number(data.annualRate || 0),

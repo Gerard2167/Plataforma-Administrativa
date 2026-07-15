@@ -52,6 +52,8 @@ Cada prestamo guarda:
 - Persona que recibe el dinero.
 - Fuente del dinero.
 - Monto prestado.
+- Fecha en que se entrega el prestamo.
+- Fecha en que inicia el primer pago o corte de interes.
 - Si cobra interes o no.
 - Porcentaje de interes por periodo.
 - Frecuencia de cobro mensual o quincenal.
@@ -61,9 +63,9 @@ Cada prestamo guarda:
 - Pagos realizados, separados entre interes cubierto y capital abonado.
 - Saldo pendiente separado entre capital e interes.
 
-El interes se calcula por periodo sobre el saldo de capital pendiente. Si la frecuencia es mensual, el porcentaje ingresado se cobra cada mes; si es quincenal, se cobra cada quincena. Por ejemplo, un prestamo de `200.00` con `5%` quincenal genera `10.00` de interes en el proximo corte.
+El interes se calcula por periodo sobre el saldo de capital pendiente desde la fecha del primer pago. Si la frecuencia es mensual, el porcentaje ingresado se cobra cada mes; si es quincenal, se cobra cada quincena. Por ejemplo, un prestamo de `200.00` con `5%` quincenal genera `10.00` de interes en el proximo corte.
 
-Cuando se registra un pago, el sistema cubre primero el interes pendiente y luego aplica la diferencia al capital. La pantalla no sugiere cuota estimada para que se registre el monto realmente pagado.
+Cuando se registra un pago, el sistema cubre primero el interes pendiente y luego aplica la diferencia al capital. Si no se paga todo el interes vencido, la parte no pagada queda acumulada como interes pendiente para el siguiente corte. La pantalla no sugiere cuota estimada para que se registre el monto realmente pagado.
 
 Si el prestamo sale de un rubro de un auto, el sistema descuenta el monto del saldo acumulado del rubro. Cuando se registra un pago, el dinero vuelve al mismo rubro o cuenta origen.
 
