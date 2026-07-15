@@ -54,10 +54,13 @@ Cada prestamo guarda:
 - Monto prestado.
 - Si cobra interes o no.
 - Interes anual.
+- Frecuencia de cobro mensual o quincenal.
 - Plazo en meses.
 - Dia estimado de pago.
 - Pagos realizados.
 - Saldo pendiente.
+
+El interes se calcula por periodo sobre el saldo de capital pendiente. Si la frecuencia es mensual, usa 12 periodos al ano; si es quincenal, usa 24 periodos al ano.
 
 Si el prestamo sale de un rubro de un auto, el sistema descuenta el monto del saldo acumulado del rubro. Cuando se registra un pago, el dinero vuelve al mismo rubro.
 
@@ -76,6 +79,8 @@ Cada rubro tiene:
 - Saldo acumulado
 
 Cuando se registra un ingreso, el sistema reparte el dinero siguiendo la prioridad. Si el ingreso no alcanza para todos los rubros, se asigna al primer rubro hasta donde alcance y los demás quedan sin movimiento. Por ejemplo, si Préstamo tiene prioridad 1 por `80.00` y Mantenimiento prioridad 2 por `20.00`, un ingreso de `70.00` suma los `70.00` completos al saldo acumulado de Préstamo.
+
+Esto tambien aplica cuando el ingreso del dia queda por debajo de la meta esperada: si se registran `20.00`, esos `20.00` entran al rubro de prioridad 1.
 
 ## Datos
 

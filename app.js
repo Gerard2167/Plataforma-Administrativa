@@ -193,6 +193,7 @@ function migrateData(data) {
   migrated.users = migrated.users.map((user) => ({ ...user, mustChangePassword: Boolean(user.mustChangePassword) }));
   migrated.transfers = migrated.transfers || [];
   migrated.loans = migrated.loans || [];
+  migrated.loans = migrated.loans.map((loan) => ({ ...loan, frequency: loan.frequency || "monthly" }));
   migrated.familyExpenses = migrated.familyExpenses || [];
   migrated.incomeDistributions = migrated.incomeDistributions || [];
   migrated.alertSettings = {
@@ -658,6 +659,7 @@ function loansView() {
 function loanCard(loan) {
   const balance = loanBalance(loan);
   const next = nextLoanPayment(loan);
+  const principalBalance = loanPrincipalBalance(loan);
   return `
     <article class="loan-card">
       <header>
@@ -671,10 +673,11 @@ function loanCard(loan) {
       <dl>
         <div><dt>Prestado</dt><dd>${money(loan.principal)}</dd></div>
         <div><dt>Total a pagar</dt><dd>${money(loanTotalDue(loan))}</dd></div>
-        <div><dt>Interes</dt><dd>${loan.interestEnabled ? `${loan.annualRate}% anual` : "Sin interes"}</dd></div>
+        <div><dt>Interes</dt><dd>${loan.interestEnabled ? `${loan.annualRate}% anual · ${loanFrequencyLabel(loan)}` : "Sin interes"}</dd></div>
         <div><dt>Cuota estimada</dt><dd>${money(loanMonthlyPayment(loan))}</dd></div>
         <div><dt>Proximo pago</dt><dd>${next ? `${dateText(next.date)} · ${money(next.amount)}` : "Pagado"}</dd></div>
         <div><dt>Pagado</dt><dd>${money(loanPaid(loan))}</dd></div>
+        <div><dt>Saldo capital</dt><dd>${money(principalBalance)}</dd></div>
       </dl>
       <p>${loan.notes || ""}</p>
       <div class="records compact-records">${loanPayments(loan)}</div>
@@ -700,9 +703,7 @@ function activeLoans() {
 }
 
 function loanTotalDue(loan) {
-  const principal = Number(loan.principal || 0);
-  if (!loan.interestEnabled) return principal;
-  return principal + principal * (Number(loan.annualRate || 0) / 100) * (Number(loan.termMonths || 1) / 12);
+  return loanSchedule(loan).reduce((total, period) => total + period.amount, 0);
 }
 
 function loanPaid(loan) {
@@ -714,17 +715,72 @@ function loanBalance(loan) {
 }
 
 function loanMonthlyPayment(loan) {
-  return loanTotalDue(loan) / Math.max(1, Number(loan.termMonths || 1));
+  const next = nextLoanPayment(loan);
+  if (next) return next.amount;
+  return loanTotalDue(loan) / Math.max(1, loanPeriodCount(loan));
 }
 
 function nextLoanPayment(loan) {
   const balance = loanBalance(loan);
   if (balance <= 0) return null;
   const paymentsMade = loan.payments?.length || 0;
+  const period = loanSchedule(loan)[Math.min(paymentsMade, loanSchedule(loan).length - 1)];
+  return period ? { date: period.date, amount: Math.min(balance, period.amount) } : null;
+}
+
+function loanSchedule(loan) {
+  const principal = Number(loan.principal || 0);
+  const periods = loanPeriodCount(loan);
+  const principalPortion = principal / periods;
+  const rate = loan.interestEnabled ? loanPeriodicRate(loan) : 0;
+  let principalBalance = principal;
+  return Array.from({ length: periods }, (_, index) => {
+    const interest = principalBalance * rate;
+    const principalPayment = Math.min(principalBalance, principalPortion);
+    const amount = principalPayment + interest;
+    const date = loanPeriodDate(loan, index + 1);
+    principalBalance = Math.max(0, principalBalance - principalPayment);
+    return { period: index + 1, date, principal: principalPayment, interest, amount, principalBalance };
+  });
+}
+
+function loanPeriodCount(loan) {
+  return Math.max(1, Number(loan.termMonths || 1) * (loan.frequency === "biweekly" ? 2 : 1));
+}
+
+function loanPeriodicRate(loan) {
+  return (Number(loan.annualRate || 0) / 100) / (loan.frequency === "biweekly" ? 24 : 12);
+}
+
+function loanPeriodDate(loan, period) {
   const date = new Date(`${loan.startDate}T00:00:00`);
-  date.setMonth(date.getMonth() + paymentsMade + 1);
-  date.setDate(Number(loan.dueDay || date.getDate()));
-  return { date: date.toISOString().slice(0, 10), amount: Math.min(balance, loanMonthlyPayment(loan)) };
+  if (loan.frequency === "biweekly") {
+    date.setDate(date.getDate() + period * 14);
+  } else {
+    date.setMonth(date.getMonth() + period);
+    date.setDate(Math.min(Number(loan.dueDay || date.getDate()), 28));
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function loanPrincipalBalance(loan) {
+  const schedule = loanSchedule(loan);
+  const paid = loanPaid(loan);
+  let remainingPaid = paid;
+  let principalBalance = Number(loan.principal || 0);
+  schedule.forEach((period) => {
+    if (remainingPaid <= 0) return;
+    const interestPaid = Math.min(remainingPaid, period.interest);
+    remainingPaid -= interestPaid;
+    const principalPaid = Math.min(remainingPaid, period.principal);
+    remainingPaid -= principalPaid;
+    principalBalance = Math.max(0, principalBalance - principalPaid);
+  });
+  return principalBalance;
+}
+
+function loanFrequencyLabel(loan) {
+  return loan.frequency === "biweekly" ? "quincenal" : "mensual";
 }
 
 function familyExpenseRecords() {
@@ -1364,6 +1420,7 @@ function drawerForm() {
       <div class="field"><label>Fecha inicio</label><input name="startDate" type="date" value="${today()}" required /></div>
       <div class="field"><label>Meses plazo</label><input name="termMonths" type="number" min="1" value="1" required /></div>
       <div class="field"><label>Dia de pago</label><input name="dueDay" type="number" min="1" max="31" value="30" required /></div>
+      <div class="field"><label>Frecuencia de cobro</label><select name="frequency"><option value="monthly">Mensual</option><option value="biweekly">Quincenal</option></select></div>
       <div class="field"><label>Cobra interes</label><select name="interestEnabled"><option value="false">No</option><option value="true">Si</option></select></div>
       <div class="field"><label>% interes anual</label><input name="annualRate" type="number" step="0.01" min="0" value="0" /></div>
       <div class="field full"><label>Notas</label><textarea name="notes" placeholder="Condiciones, motivo, acuerdo de pago"></textarea></div>
@@ -1610,6 +1667,7 @@ function createLoan(data) {
     startDate: data.startDate,
     termMonths: Number(data.termMonths || 1),
     dueDay: Number(data.dueDay || 30),
+    frequency: data.frequency || "monthly",
     interestEnabled: data.interestEnabled === "true",
     annualRate: Number(data.annualRate || 0),
     notes: data.notes,
