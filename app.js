@@ -13,6 +13,7 @@ const permissions = [
   { id: "expense:create", label: "Ingresar gastos" },
   { id: "maintenance:create", label: "Ingresar mantenimientos" },
   { id: "accounting:view", label: "Ver contabilidad" },
+  { id: "accounts:manage", label: "Administrar cuentas contables" },
   { id: "transfers:create", label: "Solicitar transacciones" },
   { id: "transfers:authorize", label: "Autorizar transacciones" },
   { id: "settings:access", label: "Ingresar a parametria" },
@@ -150,6 +151,7 @@ const initialData = {
   transfers: [],
   loans: [],
   familyExpenses: [],
+  customAccounts: [],
   accountBalances: {},
   alertSettings: structuredClone(defaultAlertSettings),
 };
@@ -187,8 +189,8 @@ function migrateData(data) {
   migrated.roles = migrated.roles?.length ? migrated.roles : structuredClone(defaultRoles);
   migrated.roles = migrated.roles.map((role) => {
     const extraPermissions = [];
-    if (role.id === "owner") extraPermissions.push("accounting:view", "alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:view", "family:manage", "transfers:create", "transfers:authorize");
-    if (role.id === "accountant") extraPermissions.push("accounting:view", "transfers:create", "transfers:authorize");
+    if (role.id === "owner") extraPermissions.push("accounting:view", "accounts:manage", "alerts:view", "alerts:manage", "loans:view", "loans:manage", "family:view", "family:manage", "transfers:create", "transfers:authorize");
+    if (role.id === "accountant") extraPermissions.push("accounting:view", "accounts:manage", "transfers:create", "transfers:authorize");
     if (role.id === "operator") extraPermissions.push("alerts:view");
     return { ...role, permissions: [...new Set([...(role.permissions || []), ...extraPermissions])] };
   });
@@ -209,6 +211,7 @@ function migrateData(data) {
     };
   });
   migrated.familyExpenses = migrated.familyExpenses || [];
+  migrated.customAccounts = migrated.customAccounts || [];
   migrated.accountBalances = migrated.accountBalances || {};
   migrated.incomeDistributions = migrated.incomeDistributions || [];
   migrated.alertSettings = {
@@ -871,6 +874,7 @@ function accountingView() {
       <section class="panel">
         <div class="section-title">
           <div><h2>Cuentas y rubros</h2><p class="hint">Saldos disponibles para prestamos y movimientos internos.</p></div>
+          ${hasPermission("accounts:manage") ? `<button class="primary" data-drawer="account">Agregar cuenta</button>` : ""}
         </div>
         <div class="records">${accountRecords()}</div>
       </section>
@@ -892,6 +896,10 @@ function accountList() {
   state.rentals.forEach((rental) => {
     const value = `rental:${rental.id}:rent`;
     accounts.push({ value, label: `${rental.property} · Cuenta alquiler`, type: "Alquiler", balance: accountBalance(value) });
+  });
+  state.customAccounts.forEach((account) => {
+    const value = `custom:${account.id}:main`;
+    accounts.push({ value, label: account.name, type: account.type || "Cuenta", balance: accountBalance(value) });
   });
   accounts.push({ value: "family:general:cash", label: "Cuenta familiar / efectivo", type: "Familia", balance: accountBalance("family:general:cash") });
   return accounts;
@@ -922,6 +930,10 @@ function accountOptions() {
   state.rentals.forEach((rental) => {
     options.push({ value: `rental:${rental.id}:rent`, label: `${rental.property} · Cuenta alquiler` });
   });
+  state.customAccounts.forEach((account) => {
+    const value = `custom:${account.id}:main`;
+    options.push({ value, label: `${account.name} (${money(accountBalance(value))})` });
+  });
   options.push({ value: "family:general:cash", label: "Cuenta familiar / efectivo" });
   return options.map((option) => `<option value="${option.value}">${option.label}</option>`).join("");
 }
@@ -941,6 +953,10 @@ function parseAccount(value) {
   if (sourceType === "rental") {
     const rental = state.rentals.find((item) => item.id === sourceId);
     sourceLabel = `${rental?.property || "Alquiler"} · Cuenta alquiler`;
+  }
+  if (sourceType === "custom") {
+    const account = state.customAccounts.find((item) => item.id === sourceId);
+    sourceLabel = account?.name || "Cuenta personalizada";
   }
   return { sourceType, sourceId, allocationId, sourceLabel, value };
 }
@@ -1543,6 +1559,15 @@ function drawerForm() {
       <button class="primary full" type="submit">Guardar solicitud</button>
     </form>`;
   }
+  if (drawer.type === "account") {
+    return `<form id="drawerForm" data-form="account" class="form-grid">
+      <div class="field"><label>Nombre de cuenta</label><input name="name" placeholder="Banco, efectivo, reserva, tarjeta" required /></div>
+      <div class="field"><label>Tipo</label><select name="type"><option>Banco</option><option>Efectivo</option><option>Ahorro</option><option>Tarjeta</option><option>Reserva</option><option>Otro</option></select></div>
+      <div class="field"><label>Saldo inicial</label><input name="openingBalance" type="number" step="0.01" value="0" required /></div>
+      <div class="field full"><label>Descripcion</label><textarea name="description"></textarea></div>
+      <button class="primary full" type="submit">Guardar cuenta</button>
+    </form>`;
+  }
   if (drawer.type === "alert-settings") {
     return `<form id="drawerForm" data-form="alert-settings" class="form-grid">
       <div class="field"><label>Dias antes de vencimiento</label><input name="daysBefore" type="number" min="1" value="${state.alertSettings.daysBefore}" required /></div>
@@ -1768,6 +1793,7 @@ function handleForm(event) {
   if (type === "user") saveUser(data);
   if (type === "role") saveRole(new FormData(form), data);
   if (type === "transfer") createTransfer(data);
+  if (type === "account") createAccount(data);
   if (type === "alert-settings") saveAlertSettings(new FormData(form), data);
   if (type === "loan") createLoan(data);
   if (type === "loan-payment") registerLoanPayment(data);
@@ -1793,6 +1819,7 @@ function allowedForForm(type) {
     user: "users:manage",
     role: "users:manage",
     transfer: "transfers:create",
+    account: "accounts:manage",
     "alert-settings": "alerts:manage",
     loan: "loans:manage",
     "loan-payment": "loans:manage",
@@ -1837,6 +1864,21 @@ function registerLoanPayment(data) {
   loan.payments.push({ id: crypto.randomUUID(), date: data.date, amount, interestPaid, principalPaid, reference: data.reference, notes: data.notes });
   depositToLoanSource(loan, amount);
   if (loanBalance(loan) <= 0) loan.status = "Pagado";
+}
+
+function createAccount(data) {
+  const id = crypto.randomUUID();
+  const account = {
+    id,
+    name: data.name,
+    type: data.type || "Cuenta",
+    description: data.description,
+    createdBy: session.email,
+    createdAt: new Date().toISOString(),
+  };
+  state.customAccounts.push(account);
+  state.accountBalances = state.accountBalances || {};
+  state.accountBalances[`custom:${id}:main`] = Number(data.openingBalance || 0);
 }
 
 function createTransfer(data) {

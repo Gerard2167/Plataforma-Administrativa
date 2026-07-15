@@ -75,6 +75,8 @@ En `Contabilidad > Transacciones` se pueden registrar solicitudes para mover fon
 
 La seccion `Contabilidad` muestra el resumen contable, los saldos por cuenta o rubro, y las transacciones. El acceso se controla por permisos de rol: ver contabilidad, solicitar transacciones y autorizar transacciones.
 
+Desde `Contabilidad` tambien se pueden crear cuentas contables personalizadas, como bancos, efectivo, reservas o tarjetas. Estas cuentas quedan disponibles como origen o destino de transacciones y como fuente para nuevos prestamos. El acceso se controla con el permiso `Administrar cuentas contables`.
+
 ## Gastos familiares
 
 En `Inicio` se puede registrar gastos familiares y verlos separados de los gastos del negocio. El dashboard muestra ingresos de negocios, gastos de negocio, gastos familiares, prestamos por cobrar y balance familiar.
