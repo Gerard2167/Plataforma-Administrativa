@@ -103,16 +103,22 @@ Esta versión puede sincronizar la información con Supabase. Si `supabase-confi
 
 1. Crea un proyecto gratis en Supabase.
 2. En Supabase, abre `SQL Editor` y ejecuta el contenido de `supabase-schema.sql`.
-3. En `Authentication > Users`, crea usuarios con los mismos correos y contraseñas que usarás en la app.
+3. En `Authentication > Users`, crea al menos el primer usuario administrador con el mismo correo que usarás para entrar por primera vez.
 4. En `Project Settings > API`, copia:
    - Project URL
    - anon public key
 5. Pega esos valores en `supabase-config.js`.
-6. Abre la app e inicia sesión. Al primer ingreso, la app sube el estado actual a Supabase; luego sincroniza cambios.
+6. En Netlify, abre `Site configuration > Environment variables` y agrega:
+   - `SUPABASE_URL`: el Project URL de Supabase.
+   - `SUPABASE_SERVICE_ROLE_KEY`: la service_role key de Supabase.
+   - `SUPABASE_STATE_ID`: opcional, usa `familia-principal` si no la defines.
+7. Abre la app e inicia sesión. Al primer ingreso, la app sube el estado actual a Supabase; luego sincroniza cambios.
 
 No pegues nunca la `service_role key` en archivos del frontend. Para el navegador solo se usa la `anon public key`.
 
 La implementación actual guarda el estado completo de la plataforma en una tabla `app_state` como JSON. Es una migración simple y práctica para empezar a compartir datos entre dispositivos. Más adelante conviene separar esto en tablas normalizadas por negocio, carro, ingreso, gasto, mantenimiento, alquiler, alerta y auditoría.
+
+Importante sobre usuarios: cuando Supabase esta activo y las variables de Netlify estan configuradas, crear, editar o borrar un usuario desde Parametria tambien lo sincroniza en `Supabase Authentication > Users`. La `service_role key` queda solo como variable segura de Netlify y nunca se coloca en `supabase-config.js`.
 
 ## Publicación gratis
 

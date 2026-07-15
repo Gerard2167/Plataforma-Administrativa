@@ -195,7 +195,7 @@ function migrateData(data) {
     return { ...role, permissions: [...new Set([...(role.permissions || []), ...extraPermissions])] };
   });
   migrated.users = migrated.users?.length ? migrated.users : structuredClone(defaultUsers);
-  migrated.users = migrated.users.map((user) => ({ ...user, mustChangePassword: Boolean(user.mustChangePassword) }));
+  migrated.users = migrated.users.map((user) => ({ ...user, supabaseUserId: user.supabaseUserId || "", mustChangePassword: Boolean(user.mustChangePassword) }));
   migrated.transfers = migrated.transfers || [];
   migrated.loans = migrated.loans || [];
   migrated.loans = migrated.loans.map((loan) => {
@@ -271,6 +271,11 @@ function saveData() {
   queueCloudSave();
 }
 
+async function saveDataNow() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (cloudReady && cloudClient) await saveCloudState();
+}
+
 function supabaseConfig() {
   return window.SUPABASE_CONFIG || {};
 }
@@ -314,6 +319,52 @@ async function signOutFromCloud() {
   cloudReady = false;
 }
 
+async function cloudAdminUsersRequest(payload) {
+  const client = initSupabaseClient();
+  if (!client) throw new Error("Supabase no esta configurado.");
+  const { data, error } = await client.auth.getSession();
+  if (error) throw error;
+  const token = data.session?.access_token;
+  if (!token) throw new Error("No hay una sesion activa de Supabase.");
+  const response = await fetch("/.netlify/functions/supabase-admin-users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ stateId: supabaseConfig().stateId || "familia-principal", ...payload }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || "No se pudo sincronizar el usuario con Supabase Auth.");
+  return result;
+}
+
+async function syncSupabaseAuthUser(user, password) {
+  if (!isSupabaseConfigured()) return null;
+  const result = await cloudAdminUsersRequest({
+    action: "upsert",
+    user: {
+      id: user.supabaseUserId,
+      email: user.email,
+      password,
+      name: user.name,
+      active: user.active,
+    },
+  });
+  return result.user || null;
+}
+
+async function deleteSupabaseAuthUser(user) {
+  if (!isSupabaseConfigured()) return null;
+  return cloudAdminUsersRequest({
+    action: "delete",
+    user: {
+      id: user.supabaseUserId,
+      email: user.email,
+    },
+  });
+}
+
 async function loadCloudState() {
   const client = initSupabaseClient();
   if (!client || !cloudReady) return;
@@ -340,7 +391,7 @@ function queueCloudSave() {
 
 async function saveCloudState() {
   const client = initSupabaseClient();
-  if (!client || !cloudReady) return;
+  if (!client || !cloudReady) return false;
   const id = supabaseConfig().stateId || "familia-principal";
   const { error } = await client.from("app_state").upsert({
     id,
@@ -349,6 +400,7 @@ async function saveCloudState() {
   });
   cloudStatus = error ? "Supabase con error" : "Supabase guardado";
   if (error) console.warn("No se pudo guardar en Supabase", error);
+  return !error;
 }
 
 function loadSession() {
@@ -1282,10 +1334,11 @@ function usersSettings() {
       <div><h2>Usuarios</h2><p class="hint">Crea accesos y asigna roles predeterminados.</p></div>
       ${hasPermission("users:manage") ? `<button class="primary" data-drawer="user">Crear usuario</button>` : ""}
     </div>
+    ${isSupabaseConfigured() ? `<div class="empty">Con Supabase activo, esta pantalla crea, actualiza y elimina usuarios tambien en Supabase Auth mediante la funcion segura de Netlify. Requiere configurar SUPABASE_SERVICE_ROLE_KEY en Netlify.</div>` : ""}
     <div class="records">
       ${state.users.map((user) => {
         const role = state.roles.find((item) => item.id === user.roleId);
-        return `<article class="record-row"><div><small>Usuario</small><strong>${user.name}</strong></div><div><small>Correo</small><strong>${user.email}</strong></div><div><small>Rol</small><strong>${role?.name || "Sin rol"}</strong></div>${hasPermission("users:manage") ? `<button class="ghost" data-drawer="user" data-id="${user.id}">Editar</button>` : ""}</article>`;
+        return `<article class="record-row"><div><small>Usuario</small><strong>${user.name}</strong></div><div><small>Correo</small><strong>${user.email}</strong></div><div><small>Rol</small><strong>${role?.name || "Sin rol"}</strong></div>${hasPermission("users:manage") ? `<button class="ghost" data-drawer="user" data-id="${user.id}">Editar</button>${user.email !== session?.email ? `<button class="ghost" data-delete="user" data-id="${user.id}">Borrar</button>` : ""}` : ""}</article>`;
       }).join("")}
     </div>
   `;
@@ -1529,9 +1582,10 @@ function drawerForm() {
     const user = state.users.find((item) => item.id === drawer.id) || { id: "", name: "", email: "", password: "", roleId: state.roles[0]?.id, active: true, mustChangePassword: true };
     return `<form id="drawerForm" data-form="user" class="form-grid">
       <input type="hidden" name="id" value="${user.id}" />
+      <input type="hidden" name="supabaseUserId" value="${user.supabaseUserId || ""}" />
       <div class="field"><label>Nombre</label><input name="name" value="${user.name}" required /></div>
       <div class="field"><label>Correo</label><input name="email" type="email" value="${user.email}" required /></div>
-      <div class="field"><label>Contrasena local</label><input name="password" value="${user.password || ""}" placeholder="Solo para modo local" /></div>
+      <div class="field"><label>Contrasena inicial</label><input name="password" value="${user.password || ""}" placeholder="${isSupabaseConfigured() ? "Requerida para usuario nuevo" : "Solo para modo local"}" /></div>
       <div class="field"><label>Rol</label><select name="roleId">${roleOptions(user.roleId)}</select></div>
       <div class="field full"><label>Estado</label><select name="active"><option value="true" ${user.active ? "selected" : ""}>Activo</option><option value="false" ${!user.active ? "selected" : ""}>Inactivo</option></select></div>
       <div class="field full"><label>Cambio de contrasena</label><select name="mustChangePassword"><option value="true" ${user.mustChangePassword ? "selected" : ""}>Debe cambiarla al ingresar</option><option value="false" ${!user.mustChangePassword ? "selected" : ""}>No requerido</option></select></div>
@@ -1747,7 +1801,7 @@ function handleAction(action) {
   render();
 }
 
-function handleForm(event) {
+async function handleForm(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = Object.fromEntries(new FormData(form).entries());
@@ -1793,7 +1847,23 @@ function handleForm(event) {
   if (type === "rent-payment") state.rentals[0].payments.push({ id: crypto.randomUUID(), ...data, amount: Number(data.amount) });
   if (type === "rent-expense") state.rentals[0].expenses.push({ id: crypto.randomUUID(), ...data, amount: Number(data.amount) });
   if (type === "business") state.businesses.push({ id: slug(data.name), name: data.name, type: data.type, status: data.status });
-  if (type === "user") saveUser(data);
+  if (type === "user") {
+    const previousUsers = structuredClone(state.users);
+    const savedUser = saveUser(data);
+    try {
+      const authUser = await syncSupabaseAuthUser(savedUser, data.password);
+      if (authUser?.id) {
+        savedUser.supabaseUserId = authUser.id;
+        const index = state.users.findIndex((item) => item.id === savedUser.id);
+        if (index >= 0) state.users[index] = savedUser;
+      }
+    } catch (error) {
+      state.users = previousUsers;
+      alert(`No se pudo crear o actualizar el usuario en Supabase Auth.\n\nDetalle: ${error.message}`);
+      render();
+      return;
+    }
+  }
   if (type === "role") saveRole(new FormData(form), data);
   if (type === "transfer") createTransfer(data);
   if (type === "account") createAccount(data);
@@ -1802,7 +1872,8 @@ function handleForm(event) {
   if (type === "loan-payment") registerLoanPayment(data);
   if (type === "family-expense") state.familyExpenses.push({ id: crypto.randomUUID(), ...data, amount: Number(data.amount) });
 
-  saveData();
+  if (["user", "role"].includes(type)) await saveDataNow();
+  else saveData();
   if (["user", "role"].includes(type) && data.email === session?.email) saveSession(state.users.find((item) => item.email === data.email));
   drawer = null;
   render();
@@ -1981,10 +2052,21 @@ function saveDistribution(vehicle, formData) {
 }
 
 function saveUser(data) {
-  const payload = { id: data.id || crypto.randomUUID(), name: data.name, email: data.email, password: data.password || "", roleId: data.roleId, active: data.active === "true", mustChangePassword: data.mustChangePassword === "true" };
+  const existing = state.users.find((item) => item.id === data.id);
+  const payload = {
+    id: data.id || crypto.randomUUID(),
+    supabaseUserId: existing?.supabaseUserId || data.supabaseUserId || "",
+    name: data.name,
+    email: data.email,
+    password: data.password || existing?.password || "",
+    roleId: data.roleId,
+    active: data.active === "true",
+    mustChangePassword: data.mustChangePassword === "true",
+  };
   const index = state.users.findIndex((item) => item.id === data.id);
   if (index >= 0) state.users[index] = payload;
   else state.users.push(payload);
+  return payload;
 }
 
 function saveRole(formData, data) {
@@ -2009,7 +2091,11 @@ function saveAlertSettings(formData, data) {
   };
 }
 
-function deleteRecord(type, id) {
+async function deleteRecord(type, id) {
+  if (type === "user") {
+    await deleteUser(id);
+    return;
+  }
   if (type === "account") {
     deleteAccount(id);
     return;
@@ -2030,6 +2116,29 @@ function deleteRecord(type, id) {
   if (type === "familyExpense") state.familyExpenses = state.familyExpenses.filter((item) => item.id !== id);
   if (type === "loan") deleteLoan(id);
   saveData();
+  render();
+}
+
+async function deleteUser(id) {
+  if (!hasPermission("users:manage")) {
+    alert("Tu rol no tiene permiso para borrar usuarios.");
+    return;
+  }
+  const user = state.users.find((item) => item.id === id);
+  if (!user) return;
+  if (user.email === session?.email) {
+    alert("No puedes borrar el usuario con el que estas conectado.");
+    return;
+  }
+  if (!confirm(`Borrar el usuario ${user.email}?`)) return;
+  try {
+    await deleteSupabaseAuthUser(user);
+  } catch (error) {
+    alert(`No se pudo borrar el usuario en Supabase Auth.\n\nDetalle: ${error.message}`);
+    return;
+  }
+  state.users = state.users.filter((item) => item.id !== id);
+  await saveDataNow();
   render();
 }
 
