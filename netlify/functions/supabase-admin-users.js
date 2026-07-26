@@ -99,8 +99,17 @@ async function upsertAuthUser(supabaseUrl, serviceRoleKey, input) {
   if (input.password) payload.password = input.password;
 
   if (existing?.id) {
-    const response = await adminFetch(supabaseUrl, serviceRoleKey, `/auth/v1/admin/users/${existing.id}`, "PUT", payload);
-    return compactUser(response);
+    try {
+      const response = await adminFetch(supabaseUrl, serviceRoleKey, `/auth/v1/admin/users/${existing.id}`, "PUT", payload);
+      return compactUser(response);
+    } catch (error) {
+      if (!isMissingUserError(error)) throw error;
+      const byEmail = await findAuthUserByEmail(supabaseUrl, serviceRoleKey, email);
+      if (byEmail?.id) {
+        const response = await adminFetch(supabaseUrl, serviceRoleKey, `/auth/v1/admin/users/${byEmail.id}`, "PUT", payload);
+        return compactUser(response);
+      }
+    }
   }
 
   if (!input.password) throw Object.assign(new Error("La contrasena inicial es obligatoria para crear el usuario."), { statusCode: 400 });
@@ -112,7 +121,11 @@ async function deleteAuthUser(supabaseUrl, serviceRoleKey, input) {
   const email = normalizeEmail(input.email);
   const existing = input.id ? { id: input.id } : await findAuthUserByEmail(supabaseUrl, serviceRoleKey, email);
   if (!existing?.id) return { deleted: false };
-  await adminFetch(supabaseUrl, serviceRoleKey, `/auth/v1/admin/users/${existing.id}`, "DELETE");
+  try {
+    await adminFetch(supabaseUrl, serviceRoleKey, `/auth/v1/admin/users/${existing.id}`, "DELETE");
+  } catch (error) {
+    if (!isMissingUserError(error)) throw error;
+  }
   return { deleted: true };
 }
 
@@ -137,6 +150,10 @@ async function adminFetch(supabaseUrl, serviceRoleKey, path, method, payload) {
     throw Object.assign(new Error(data.msg || data.message || data.error_description || "Supabase Auth rechazo la operacion."), { statusCode: response.status });
   }
   return data;
+}
+
+function isMissingUserError(error) {
+  return error.statusCode === 404 || /user not found/i.test(error.message || "");
 }
 
 function compactUser(user) {

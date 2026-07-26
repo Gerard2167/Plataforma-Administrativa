@@ -151,6 +151,7 @@ const initialData = {
   transfers: [],
   loans: [],
   familyExpenses: [],
+  businessRecords: [],
   customAccounts: [],
   accountBalances: {},
   alertSettings: structuredClone(defaultAlertSettings),
@@ -211,6 +212,7 @@ function migrateData(data) {
     };
   });
   migrated.familyExpenses = migrated.familyExpenses || [];
+  migrated.businessRecords = migrated.businessRecords || [];
   migrated.customAccounts = migrated.customAccounts || [];
   migrated.accountBalances = migrated.accountBalances || {};
   migrated.incomeDistributions = migrated.incomeDistributions || [];
@@ -596,6 +598,12 @@ function topbarActions() {
       ${hasPermission("expense:create") ? `<button class="secondary" data-drawer="rent-expense">＋ Gasto</button>` : ""}
     `;
   }
+  if (activeBusiness) {
+    return `
+      ${hasPermission("income:create") ? `<button class="secondary" data-drawer="business-income">＋ Ingreso</button>` : ""}
+      ${hasPermission("expense:create") ? `<button class="secondary" data-drawer="business-expense">＋ Gasto</button>` : ""}
+    `;
+  }
   if (hasPermission("business:manage")) return `<button class="secondary" data-action="new-business">＋ Agregar negocio</button>`;
   return "";
 }
@@ -616,8 +624,10 @@ function content() {
 function dashboardView() {
   const uberTotal = sum(state.uberIncome, "amount");
   const rentTotal = state.rentals.flatMap((rental) => rental.payments).reduce((total, item) => total + Number(item.amount), 0);
-  const businessIncome = uberTotal + rentTotal;
-  const businessExpenses = sum(state.expenses, "amount") + sum(state.maintenances, "cost") + state.rentals.flatMap((rental) => rental.expenses).reduce((total, item) => total + Number(item.amount), 0);
+  const customIncome = businessRecordsByType("income").reduce((total, item) => total + Number(item.amount || 0), 0);
+  const customExpenses = businessRecordsByType("expense").reduce((total, item) => total + Number(item.amount || 0), 0);
+  const businessIncome = uberTotal + rentTotal + customIncome;
+  const businessExpenses = sum(state.expenses, "amount") + sum(state.maintenances, "cost") + state.rentals.flatMap((rental) => rental.expenses).reduce((total, item) => total + Number(item.amount), 0) + customExpenses;
   const familyExpenses = canViewFamilyFinances() ? sum(state.familyExpenses, "amount") : 0;
   const loanReceivable = activeLoans().reduce((total, loan) => total + loanBalance(loan), 0);
   const alertCount = visibleAlerts().length;
@@ -655,12 +665,14 @@ function businessCard(business) {
     uber: "3 carros activos con metas diarias de lunes a sabado, registros por conductor, mantenimiento y gastos.",
     "casa-chorrera": `Renta mensual de ${money(240)}, control de pagos, gastos y estado del contrato.`,
   };
+  const income = businessTotal(business.id, "income");
+  const expenses = businessTotal(business.id, "expense");
   return `
     <article class="business-card">
       <span class="pill">${business.type}</span>
       <div>
         <h3>${business.name}</h3>
-        <p>${descriptions[business.id] || "Negocio preparado para incorporar ingresos, gastos y reportes en una proxima etapa."}</p>
+        <p>${descriptions[business.id] || `Ingresos ${money(income)} · Gastos ${money(expenses)} · Balance ${money(income - expenses)}`}</p>
       </div>
       <button class="primary" data-business="${business.id}">Abrir negocio</button>
     </article>
@@ -669,14 +681,46 @@ function businessCard(business) {
 
 function genericBusinessView() {
   const business = state.businesses.find((item) => item.id === activeBusiness);
+  const income = businessTotal(activeBusiness, "income");
+  const expenses = businessTotal(activeBusiness, "expense");
+  const records = businessRecords(activeBusiness);
   return `
+    <div class="metrics">
+      <div class="metric"><span>Ingresos</span><strong>${hasPermission("accounting:view") ? money(income) : "Restringido"}</strong></div>
+      <div class="metric"><span>Gastos</span><strong>${hasPermission("accounting:view") ? money(expenses) : "Restringido"}</strong></div>
+      <div class="metric"><span>Balance</span><strong>${hasPermission("accounting:view") ? money(income - expenses) : "Restringido"}</strong></div>
+      <div class="metric"><span>Registros</span><strong>${records.length}</strong></div>
+    </div>
     <section class="panel">
       <div class="section-title">
         <div><h2>${business?.name || "Negocio"}</h2><p class="hint">Estado: ${business?.status || "Activo"} · Tipo: ${business?.type || "General"}</p></div>
+        <div class="actions">
+          ${hasPermission("income:create") ? `<button class="ghost" data-drawer="business-income">Registrar ingreso</button>` : ""}
+          ${hasPermission("expense:create") ? `<button class="ghost" data-drawer="business-expense">Registrar gasto</button>` : ""}
+        </div>
       </div>
-      <div class="empty">Este negocio ya esta creado. El siguiente paso es agregarle su propio modulo de ingresos, gastos y reportes.</div>
+      <div class="records">
+        ${records.length ? records.map((item) => `<article class="record-row"><div><small>${item.kind === "income" ? "Ingreso" : "Gasto"}</small><strong>${item.description || item.category || "Movimiento"}</strong></div><div><small>Persona / fuente</small><strong>${item.person || "General"}</strong></div><div><small>Fecha</small><strong>${dateText(item.date)}</strong></div><div><small>Monto</small><strong>${hasPermission("accounting:view") ? money(item.amount) : "Restringido"}</strong></div>${deleteButton(item.kind === "income" ? "businessIncome" : "businessExpense", item.id)}</article>`).join("") : `<div class="empty">Todavia no hay ingresos ni gastos registrados para este negocio.</div>`}
+      </div>
     </section>
   `;
+}
+
+function businessRecords(businessId) {
+  return (state.businessRecords || [])
+    .filter((item) => item.businessId === businessId)
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function businessRecordsByType(kind) {
+  return (state.businessRecords || []).filter((item) => item.kind === kind);
+}
+
+function businessTotal(businessId, kind) {
+  return businessRecords(businessId)
+    .filter((item) => item.kind === kind)
+    .reduce((total, item) => total + Number(item.amount || 0), 0);
 }
 
 function profileView() {
@@ -910,14 +954,16 @@ function accountingView() {
   if (!canAccessAccounting()) return `<div class="empty">Tu rol no tiene permiso para ver contabilidad.</div>`;
   const uberIncome = sum(state.uberIncome, "amount");
   const rentIncome = state.rentals.flatMap((rental) => rental.payments).reduce((total, item) => total + Number(item.amount), 0);
-  const businessExpenses = sum(state.expenses, "amount") + sum(state.maintenances, "cost") + state.rentals.flatMap((rental) => rental.expenses).reduce((total, item) => total + Number(item.amount), 0);
+  const customIncome = businessRecordsByType("income").reduce((total, item) => total + Number(item.amount || 0), 0);
+  const customExpenses = businessRecordsByType("expense").reduce((total, item) => total + Number(item.amount || 0), 0);
+  const businessExpenses = sum(state.expenses, "amount") + sum(state.maintenances, "cost") + state.rentals.flatMap((rental) => rental.expenses).reduce((total, item) => total + Number(item.amount), 0) + customExpenses;
   const familyExpenses = canViewFamilyFinances() ? sum(state.familyExpenses, "amount") : 0;
   const receivable = activeLoans().reduce((total, loan) => total + loanBalance(loan), 0);
   const accountTotal = accountList().reduce((total, account) => total + account.balance, 0);
   return `
     ${hasPermission("accounting:view") ? `
       <div class="metrics">
-        <div class="metric"><span>Ingresos negocio</span><strong>${money(uberIncome + rentIncome)}</strong></div>
+        <div class="metric"><span>Ingresos negocio</span><strong>${money(uberIncome + rentIncome + customIncome)}</strong></div>
         <div class="metric"><span>Gastos negocio</span><strong>${money(businessExpenses)}</strong></div>
         <div class="metric"><span>Gastos familiares</span><strong>${canViewFamilyFinances() ? money(familyExpenses) : "Restringido"}</strong></div>
         <div class="metric"><span>Prestamos por cobrar</span><strong>${money(receivable)}</strong></div>
@@ -949,6 +995,12 @@ function accountList() {
     const value = `rental:${rental.id}:rent`;
     accounts.push({ value, label: `${rental.property} · Cuenta alquiler`, type: "Alquiler", balance: accountBalance(value) });
   });
+  state.businesses
+    .filter((business) => !["uber", "casa-chorrera"].includes(business.id))
+    .forEach((business) => {
+      const value = `business:${business.id}:main`;
+      accounts.push({ value, label: `${business.name} · Cuenta negocio`, type: business.type || "Negocio", balance: accountBalance(value) });
+    });
   state.customAccounts.forEach((account) => {
     const value = `custom:${account.id}:main`;
     accounts.push({ value, label: account.name, type: account.type || "Cuenta", balance: accountBalance(value) });
@@ -982,6 +1034,12 @@ function accountOptions() {
   state.rentals.forEach((rental) => {
     options.push({ value: `rental:${rental.id}:rent`, label: `${rental.property} · Cuenta alquiler` });
   });
+  state.businesses
+    .filter((business) => !["uber", "casa-chorrera"].includes(business.id))
+    .forEach((business) => {
+      const value = `business:${business.id}:main`;
+      options.push({ value, label: `${business.name} · Cuenta negocio (${money(accountBalance(value))})` });
+    });
   state.customAccounts.forEach((account) => {
     const value = `custom:${account.id}:main`;
     options.push({ value, label: `${account.name} (${money(accountBalance(value))})` });
@@ -1005,6 +1063,10 @@ function parseAccount(value) {
   if (sourceType === "rental") {
     const rental = state.rentals.find((item) => item.id === sourceId);
     sourceLabel = `${rental?.property || "Alquiler"} · Cuenta alquiler`;
+  }
+  if (sourceType === "business") {
+    const business = state.businesses.find((item) => item.id === sourceId);
+    sourceLabel = `${business?.name || "Negocio"} · Cuenta negocio`;
   }
   if (sourceType === "custom") {
     const account = state.customAccounts.find((item) => item.id === sourceId);
@@ -1578,6 +1640,19 @@ function drawerForm() {
       <button class="primary full" type="submit">Guardar gasto</button>
     </form>`;
   }
+  if (drawer.type === "business-income" || drawer.type === "business-expense") {
+    const business = state.businesses.find((item) => item.id === activeBusiness);
+    const isIncome = drawer.type === "business-income";
+    return `<form id="drawerForm" data-form="${drawer.type}" class="form-grid">
+      <input type="hidden" name="businessId" value="${business?.id || activeBusiness}" />
+      <div class="field"><label>Fecha</label><input name="date" type="date" value="${today()}" required /></div>
+      <div class="field"><label>Monto</label><input name="amount" type="number" step="0.01" min="0" required /></div>
+      <div class="field"><label>${isIncome ? "Miembro / fuente" : "Pagado por"}</label><input name="person" placeholder="${isIncome ? "Gerardo, Gabriela, empresa" : "Persona o cuenta"}" /></div>
+      <div class="field"><label>Categoria</label><input name="category" value="${isIncome ? "Salario" : "Gasto"}" required /></div>
+      <div class="field full"><label>Descripcion</label><textarea name="description" placeholder="${business?.name || "Negocio"}"></textarea></div>
+      <button class="primary full" type="submit">${isIncome ? "Guardar ingreso" : "Guardar gasto"}</button>
+    </form>`;
+  }
   if (drawer.type === "user") {
     const user = state.users.find((item) => item.id === drawer.id) || { id: "", name: "", email: "", password: "", roleId: state.roles[0]?.id, active: true, mustChangePassword: true };
     return `<form id="drawerForm" data-form="user" class="form-grid">
@@ -1847,6 +1922,8 @@ async function handleForm(event) {
   if (type === "rent-payment") state.rentals[0].payments.push({ id: crypto.randomUUID(), ...data, amount: Number(data.amount) });
   if (type === "rent-expense") state.rentals[0].expenses.push({ id: crypto.randomUUID(), ...data, amount: Number(data.amount) });
   if (type === "business") state.businesses.push({ id: slug(data.name), name: data.name, type: data.type, status: data.status });
+  if (type === "business-income") createBusinessRecord(data, "income");
+  if (type === "business-expense") createBusinessRecord(data, "expense");
   if (type === "user") {
     const previousUsers = structuredClone(state.users);
     const savedUser = saveUser(data);
@@ -1890,6 +1967,8 @@ function allowedForForm(type) {
     "rent-payment": "income:create",
     "rent-expense": "expense:create",
     business: "business:manage",
+    "business-income": "income:create",
+    "business-expense": "expense:create",
     user: "users:manage",
     role: "users:manage",
     transfer: "transfers:create",
@@ -1925,6 +2004,31 @@ function createLoan(data) {
   };
   withdrawFromLoanSource(loan, principal);
   state.loans.push(loan);
+}
+
+function createBusinessRecord(data, kind) {
+  const businessId = data.businessId || activeBusiness;
+  const amount = Number(data.amount || 0);
+  state.businessRecords = state.businessRecords || [];
+  state.businessRecords.push({
+    id: crypto.randomUUID(),
+    businessId,
+    kind,
+    date: data.date,
+    amount,
+    person: data.person,
+    category: data.category,
+    description: data.description,
+    createdBy: session.email,
+  });
+  adjustAccountBalance(`business:${businessId}:main`, kind === "income" ? amount : -amount);
+}
+
+function deleteBusinessRecord(id, kind) {
+  const record = (state.businessRecords || []).find((item) => item.id === id && item.kind === kind);
+  if (!record) return;
+  adjustAccountBalance(`business:${record.businessId}:main`, kind === "income" ? -Number(record.amount || 0) : Number(record.amount || 0));
+  state.businessRecords = state.businessRecords.filter((item) => item.id !== id);
 }
 
 function registerLoanPayment(data) {
@@ -2114,6 +2218,8 @@ async function deleteRecord(type, id) {
   if (type === "payment") state.rentals[0].payments = state.rentals[0].payments.filter((item) => item.id !== id);
   if (type === "rentExpense") state.rentals[0].expenses = state.rentals[0].expenses.filter((item) => item.id !== id);
   if (type === "familyExpense") state.familyExpenses = state.familyExpenses.filter((item) => item.id !== id);
+  if (type === "businessIncome") deleteBusinessRecord(id, "income");
+  if (type === "businessExpense") deleteBusinessRecord(id, "expense");
   if (type === "loan") deleteLoan(id);
   saveData();
   render();
