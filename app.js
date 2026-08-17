@@ -7,6 +7,8 @@ let cloudClient = null;
 let cloudReady = false;
 let cloudStatus = "Local";
 let cloudSaveTimer = null;
+let cloudSyncing = false;
+let lastCloudLoadAt = 0;
 
 const permissions = [
   { id: "income:create", label: "Ingresar ingresos" },
@@ -370,23 +372,62 @@ async function deleteSupabaseAuthUser(user) {
 async function loadCloudState() {
   const client = initSupabaseClient();
   if (!client || !cloudReady) return;
-  const id = supabaseConfig().stateId || "familia-principal";
-  const { data, error } = await client.from("app_state").select("data").eq("id", id).maybeSingle();
-  if (error) {
-    cloudStatus = "Supabase con error";
-    throw error;
+  cloudSyncing = true;
+  try {
+    const id = supabaseConfig().stateId || "familia-principal";
+    const { data, error } = await client.from("app_state").select("data").eq("id", id).maybeSingle();
+    if (error) {
+      cloudStatus = "Supabase con error";
+      throw error;
+    }
+    if (data?.data) {
+      state = migrateData(data.data);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      cloudStatus = "Supabase sincronizado";
+      lastCloudLoadAt = Date.now();
+      return;
+    }
+    await saveCloudState();
+    lastCloudLoadAt = Date.now();
+  } finally {
+    cloudSyncing = false;
   }
-  if (data?.data) {
-    state = migrateData(data.data);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    cloudStatus = "Supabase sincronizado";
+}
+
+async function refreshFromCloud(showMessage = false) {
+  if (!isSupabaseConfigured()) return;
+  const client = initSupabaseClient();
+  if (!client) return;
+  const { data } = await client.auth.getSession();
+  cloudReady = Boolean(data.session);
+  if (!cloudReady) {
+    cloudStatus = "Supabase sin sesion";
+    if (showMessage) alert("No hay una sesion activa de Supabase para sincronizar.");
+    render();
     return;
   }
-  await saveCloudState();
+  await loadCloudState();
+  if (session) {
+    const user = state.users.find((item) => item.email === session.email && item.active);
+    if (user) saveSession(user);
+  }
+  render();
+  if (showMessage) alert("Informacion sincronizada desde Supabase.");
+}
+
+async function refreshFromCloudIfStale() {
+  if (!session || !cloudReady || cloudSyncing) return;
+  if (Date.now() - lastCloudLoadAt < 15000) return;
+  try {
+    await refreshFromCloud(false);
+  } catch (error) {
+    console.warn("No se pudo refrescar Supabase", error);
+  }
 }
 
 function queueCloudSave() {
   if (!cloudReady || !cloudClient) return;
+  if (cloudSyncing) return;
   window.clearTimeout(cloudSaveTimer);
   cloudSaveTimer = window.setTimeout(() => saveCloudState(), CLOUD_SAVE_DELAY);
 }
@@ -528,6 +569,7 @@ function layout() {
         <div class="user-chip">
           <div><strong>${session.name}</strong><small>${session.role}</small></div>
           <span class="cloud-chip">${cloudStatus}</span>
+          ${isSupabaseConfigured() ? `<button class="ghost" data-action="sync-cloud">Sincronizar</button>` : ""}
           <button class="ghost" data-action="logout">Salir</button>
         </div>
       </aside>
@@ -834,7 +876,7 @@ function loanPayments(loan) {
   return loan.payments
     .slice()
     .sort((a, b) => b.date.localeCompare(a.date))
-    .map((payment) => `<article class="record-row"><div><small>Pago</small><strong>${payment.notes || "Abono"}</strong></div><div><small>Fecha</small><strong>${dateText(payment.date)}</strong></div><div><small>Total</small><strong>${money(payment.amount)}</strong></div><div><small>Interes</small><strong>${money(payment.interestPaid || 0)}</strong></div><div><small>Capital</small><strong>${money(payment.principalPaid || 0)}</strong></div></article>`)
+    .map((payment) => `<article class="record-row"><div><small>Pago</small><strong>${payment.notes || "Abono"}</strong></div><div><small>Fecha</small><strong>${dateText(payment.date)}</strong></div><div><small>Total</small><strong>${money(payment.amount)}</strong></div><div><small>Interes</small><strong>${money(payment.interestPaid || 0)}</strong></div><div><small>Capital</small><strong>${money(payment.principalPaid || 0)}</strong></div>${hasPermission("loans:manage") ? `<button class="ghost" data-edit-loan-payment="${payment.id}" data-loan-id="${loan.id}">Editar</button>` : ""}</article>`)
     .join("");
 }
 
@@ -1730,14 +1772,16 @@ function drawerForm() {
   }
   if (drawer.type === "loan-payment") {
     const loan = state.loans.find((item) => item.id === drawer.id);
+    const payment = loan?.payments?.find((item) => item.id === drawer.paymentId);
     const next = nextLoanPayment(loan);
     return `<form id="drawerForm" data-form="loan-payment" class="form-grid">
       <input type="hidden" name="loanId" value="${loan.id}" />
-      <div class="field"><label>Fecha</label><input name="date" type="date" value="${today()}" required /></div>
-      <div class="field"><label>Monto pagado</label><input name="amount" type="number" step="0.01" min="0" required /></div>
-      <div class="field full"><label>Referencia</label><input name="reference" placeholder="${next ? `Proximo corte: ${dateText(next.date)}` : "Prestamo pagado"}" /></div>
-      <div class="field full"><label>Nota</label><textarea name="notes">Pago de prestamo</textarea></div>
-      <button class="primary full" type="submit">Guardar pago</button>
+      <input type="hidden" name="paymentId" value="${payment?.id || ""}" />
+      <div class="field"><label>Fecha</label><input name="date" type="date" value="${payment?.date || today()}" required /></div>
+      <div class="field"><label>Monto pagado</label><input name="amount" type="number" step="0.01" min="0" value="${payment?.amount || ""}" required /></div>
+      <div class="field full"><label>Referencia</label><input name="reference" value="${payment?.reference || ""}" placeholder="${next ? `Proximo corte: ${dateText(next.date)}` : "Prestamo pagado"}" /></div>
+      <div class="field full"><label>Nota</label><textarea name="notes">${payment?.notes || "Pago de prestamo"}</textarea></div>
+      <button class="primary full" type="submit">${payment ? "Actualizar pago" : "Guardar pago"}</button>
     </form>`;
   }
   if (drawer.type === "family-expense") {
@@ -1844,6 +1888,13 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll("[data-edit-loan-payment]").forEach((button) => {
+    button.addEventListener("click", () => {
+      drawer = { type: "loan-payment", id: button.dataset.loanId, paymentId: button.dataset.editLoanPayment };
+      render();
+    });
+  });
+
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button.dataset.action));
   });
@@ -1864,12 +1915,20 @@ function bindEvents() {
   if (drawerForm) drawerForm.addEventListener("submit", handleForm);
 }
 
-function handleAction(action) {
+async function handleAction(action) {
   if (action === "logout") {
     localStorage.removeItem(SESSION_KEY);
     session = null;
     signOutFromCloud();
     cloudStatus = isSupabaseConfigured() ? "Supabase sin sesion" : "Local";
+  }
+  if (action === "sync-cloud") {
+    try {
+      await refreshFromCloud(true);
+    } catch (error) {
+      alert(`No se pudo sincronizar con Supabase.\n\nDetalle: ${error.message}`);
+    }
+    return;
   }
   if (action === "close-drawer") drawer = null;
   if (action === "new-business" && hasPermission("business:manage")) drawer = { type: "business" };
@@ -2034,14 +2093,18 @@ function deleteBusinessRecord(id, kind) {
 function registerLoanPayment(data) {
   const loan = state.loans.find((item) => item.id === data.loanId);
   if (!loan) return;
+  loan.payments = loan.payments || [];
+  const paymentId = data.paymentId || "";
+  const existingIndex = loan.payments.findIndex((payment) => payment.id === paymentId);
+  const existingPayment = existingIndex >= 0 ? loan.payments[existingIndex] : null;
+  if (existingIndex >= 0) loan.payments.splice(existingIndex, 1);
   const amount = Number(data.amount || 0);
   const status = loanStatusAt(loan, data.date);
   const interestPaid = Math.min(amount, status.interestBalance);
   const principalPaid = Math.min(amount - interestPaid, status.principalBalance);
-  loan.payments = loan.payments || [];
-  loan.payments.push({ id: crypto.randomUUID(), date: data.date, amount, interestPaid, principalPaid, reference: data.reference, notes: data.notes });
-  depositToLoanSource(loan, amount);
-  if (loanBalance(loan) <= 0) loan.status = "Pagado";
+  loan.payments.push({ id: paymentId || crypto.randomUUID(), date: data.date, amount, interestPaid, principalPaid, reference: data.reference, notes: data.notes });
+  depositToLoanSource(loan, amount - Number(existingPayment?.amount || 0));
+  loan.status = loanBalance(loan) <= 0 ? "Pagado" : "Activo";
 }
 
 function createAccount(data) {
@@ -2309,11 +2372,7 @@ async function bootstrap() {
     cloudStatus = cloudReady ? "Supabase conectado" : "Supabase sin sesion";
     if (cloudReady) {
       try {
-        await loadCloudState();
-        if (session) {
-          const user = state.users.find((item) => item.email === session.email && item.active);
-          if (user) saveSession(user);
-        }
+        await refreshFromCloud(false);
       } catch (error) {
         console.warn("No se pudo cargar Supabase", error);
       }
@@ -2323,3 +2382,8 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+window.addEventListener("focus", refreshFromCloudIfStale);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshFromCloudIfStale();
+});
